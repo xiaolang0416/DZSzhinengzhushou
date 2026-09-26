@@ -1,0 +1,5 @@
+{
+    "version": "5.0.0",
+    "download_url": "https://example.com/feifei/latest.exe",
+    "changelog": "初始版本\n- 技能按键自动战斗\n- 副本自动刷取（支持7种难度）\n- 采集/挖矿/挖宝\n- PvP斗技/战场\n- 装备精炼/重铸\n- 拍卖扫货\n- 自动喊话"
+}

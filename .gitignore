@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.spec
+*.png
+*.jpg
+*.gif
+.env
+uservar.ini
+.qoder/

@@ -1,0 +1,4 @@
+left=160
+top=60
+width=1606
+height=929

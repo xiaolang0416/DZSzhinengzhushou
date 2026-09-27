@@ -3,6 +3,7 @@
 兼容原始 uservar.ini 格式
 """
 import os
+import sys
 import configparser
 from pathlib import Path
 
@@ -15,17 +16,26 @@ class ConfigManager:
         self._data = {}
         self._config_path = None
 
+    def _get_base_dir(self):
+        if getattr(sys, 'frozen', False):
+            return os.path.dirname(sys.executable)
+        return os.path.dirname(os.path.abspath(__file__))
+
     def get_config_path(self):
         if self._config_path:
             return self._config_path
-        exe_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(exe_dir, self.DEFAULT_CONFIG_NAME)
+        return os.path.join(self._get_base_dir(), self.DEFAULT_CONFIG_NAME)
+
+    def _make_parser(self):
+        config = configparser.ConfigParser()
+        config.optionxform = str
+        return config
 
     def load(self, path):
         self._config_path = path
         self._data = {}
 
-        config = configparser.ConfigParser()
+        config = self._make_parser()
         config.read(path, encoding='utf-8')
 
         if self.SECTION_NAME in config:
@@ -37,7 +47,7 @@ class ConfigManager:
                     self._data[key] = value
 
     def save(self, path):
-        config = configparser.ConfigParser()
+        config = self._make_parser()
         config[self.SECTION_NAME] = self._data
         config["任务选中"] = {"列表": "好友对话|商店购买|示例坐标采集"}
 
@@ -60,6 +70,12 @@ class ConfigManager:
         elif val == "0":
             return False
         return default
+
+    def get_float(self, key, default=0.0):
+        try:
+            return float(self._data.get(key, str(default)))
+        except (ValueError, TypeError):
+            return default
 
     def set(self, key, value):
         self._data[key] = str(value)

@@ -1,5 +1,5 @@
 """
-小狼智能助手5.0-斗战神
+小狼智能助手5.1-斗战神
 基于原始 uservar.ini 配置结构和功能说明重新实现
 """
 import sys
@@ -55,10 +55,42 @@ class WorkerThread(QThread):
         try:
             self.log_signal.emit(f"[启动] {self.task_name}")
             self.status_signal.emit(f"正在执行: {self.task_name}")
-            self.engine.execute_task(self.task_name, self.params, self._running, self.log_signal.emit)
+            self.engine.execute_task(self.task_name, self.params, lambda: self._running, self.log_signal.emit)
             self.finished_signal.emit(True)
         except Exception as e:
             self.log_signal.emit(f"[错误] {e}")
+            self.finished_signal.emit(False)
+
+    def stop(self):
+        self._running = False
+
+
+class TaskChainWorker(QThread):
+    """按顺序执行多个自动化任务"""
+    log_signal = pyqtSignal(str)
+    status_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(bool)
+
+    def __init__(self, engine, task_chain):
+        super().__init__()
+        self.engine = engine
+        self.task_chain = task_chain  # [(task_name, params), ...]
+        self._running = True
+
+    def run(self):
+        try:
+            total = len(self.task_chain)
+            for idx, (task_name, params) in enumerate(self.task_chain):
+                if not self._running:
+                    break
+                self.log_signal.emit(f"[任务链] ({idx+1}/{total}) 开始: {task_name}")
+                self.status_signal.emit(f"({idx+1}/{total}) {task_name}")
+                self.engine.execute_task(task_name, params, lambda: self._running, self.log_signal.emit)
+                if self._running:
+                    self.log_signal.emit(f"[任务链] 完成: {task_name}")
+            self.finished_signal.emit(True)
+        except Exception as e:
+            self.log_signal.emit(f"[任务链错误] {e}")
             self.finished_signal.emit(False)
 
     def stop(self):
@@ -88,8 +120,13 @@ class MainWindow(QMainWindow):
 
         self._register_hotkeys()
 
+        QTimer.singleShot(1500, self._startup_auto_detect)
+
+    def _startup_auto_detect(self):
+        self.auto_detect_game_window()
+
     def init_ui(self):
-        self.setWindowTitle("小狼智能助手5.0-斗战神")
+        self.setWindowTitle("小狼智能助手5.1-斗战神")
         self.setMinimumSize(750, 580)
         self.resize(850, 650)
 
@@ -137,12 +174,19 @@ class MainWindow(QMainWindow):
         self.stop_btn.clicked.connect(self.stop_all)
         btn_layout.addWidget(self.stop_btn)
 
+        self.save_btn = QPushButton("保存配置")
+        self.save_btn.setFixedHeight(35)
+        self.save_btn.setFont(QFont("Microsoft YaHei", 11))
+        self.save_btn.setStyleSheet("background-color: #2196F3; color: white;")
+        self.save_btn.clicked.connect(self.save_config_auto)
+        btn_layout.addWidget(self.save_btn)
+
         self.status_label = QLabel("就绪")
         self.status_label.setAlignment(Qt.AlignCenter)
         btn_layout.addWidget(self.status_label)
         main_layout.addLayout(btn_layout)
 
-        self.statusBar().showMessage("小狼智能助手5.0-斗战神 - 就绪")
+        self.statusBar().showMessage("小狼智能助手5.1-斗战神 - 就绪")
 
     def create_combat_tab(self):
         tab = QWidget()
@@ -151,29 +195,41 @@ class MainWindow(QMainWindow):
         # 点击按键设置
         click_group = QGroupBox("在正方形中设置战斗中点击一下的按键")
         click_layout = QVBoxLayout()
+        click_layout.setSpacing(2)
+        click_layout.setContentsMargins(4, 4, 4, 4)
 
-        click_keys_layout = QHBoxLayout()
+        click_keys_layout = QGridLayout()
+        click_keys_layout.setHorizontalSpacing(0)
+        click_keys_layout.setContentsMargins(0, 0, 0, 0)
         self.click_keys = {}
         for i in range(1, 6):
-            row = QHBoxLayout()
-            row.addWidget(QLabel(f"按键:"))
+            label = QLabel(f"按键:")
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            click_keys_layout.addWidget(label, 0, (i-1)*2)
             key_edit = QLineEdit()
-            key_edit.setFixedWidth(80)
-            row.addWidget(key_edit)
+            key_edit.setFixedSize(30, 30)
+            click_keys_layout.addWidget(key_edit, 0, (i-1)*2+1)
             self.click_keys[i] = key_edit
-            click_keys_layout.addLayout(row)
+        for i in range(5):
+            click_keys_layout.setColumnStretch(i*2, 1)
+            click_keys_layout.setColumnStretch(i*2+1, 0)
         click_layout.addLayout(click_keys_layout)
 
-        click_delay_layout = QHBoxLayout()
+        click_delay_layout = QGridLayout()
+        click_delay_layout.setHorizontalSpacing(0)
+        click_delay_layout.setContentsMargins(0, 0, 0, 0)
         self.click_delays = {}
         for i in range(1, 6):
-            row = QHBoxLayout()
-            row.addWidget(QLabel(f"套秒:"))
+            label = QLabel(f"套秒:")
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            click_delay_layout.addWidget(label, 0, (i-1)*2)
             delay_edit = QLineEdit("0")
-            delay_edit.setFixedWidth(60)
-            row.addWidget(delay_edit)
+            delay_edit.setFixedSize(30, 30)
+            click_delay_layout.addWidget(delay_edit, 0, (i-1)*2+1)
             self.click_delays[i] = delay_edit
-            click_delay_layout.addLayout(row)
+        for i in range(5):
+            click_delay_layout.setColumnStretch(i*2, 1)
+            click_delay_layout.setColumnStretch(i*2+1, 0)
         click_layout.addLayout(click_delay_layout)
 
         click_group.setLayout(click_layout)
@@ -196,26 +252,31 @@ class MainWindow(QMainWindow):
         # 按住按键设置
         hold_group = QGroupBox("在正方形中设置战斗中按住不放的按键")
         hold_layout = QVBoxLayout()
+        hold_layout.setSpacing(2)
+        hold_layout.setContentsMargins(4, 4, 4, 4)
 
-        hold_keys_layout = QHBoxLayout()
+        hold_keys_layout = QGridLayout()
+        hold_keys_layout.setHorizontalSpacing(0)
+        hold_keys_layout.setContentsMargins(0, 0, 0, 0)
         self.hold_keys = {}
         for i in range(1, 6):
-            row = QHBoxLayout()
-            row.addWidget(QLabel(f"按键:"))
+            label = QLabel(f"按键:")
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            hold_keys_layout.addWidget(label, 0, (i-1)*2)
             key_edit = QLineEdit()
-            key_edit.setFixedWidth(80)
-            row.addWidget(key_edit)
+            key_edit.setFixedSize(30, 30)
+            hold_keys_layout.addWidget(key_edit, 0, (i-1)*2+1)
             self.hold_keys[i] = key_edit
-            hold_keys_layout.addLayout(row)
-        hold_layout.addLayout(hold_keys_layout)
-
-        hold_extra_layout = QHBoxLayout()
-        hold_extra_layout.addWidget(QLabel("普攻:"))
+        pu_gong_label = QLabel("普攻:")
+        pu_gong_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        hold_keys_layout.addWidget(pu_gong_label, 0, 10)
         self.normal_attack_key = QLineEdit()
-        self.normal_attack_key.setFixedWidth(80)
-        hold_extra_layout.addWidget(self.normal_attack_key)
-        hold_extra_layout.addStretch()
-        hold_layout.addLayout(hold_extra_layout)
+        self.normal_attack_key.setFixedSize(30, 30)
+        hold_keys_layout.addWidget(self.normal_attack_key, 0, 11)
+        for i in range(6):
+            hold_keys_layout.setColumnStretch(i*2, 1)
+            hold_keys_layout.setColumnStretch(i*2+1, 0)
+        hold_layout.addLayout(hold_keys_layout)
 
         hold_group.setLayout(hold_layout)
         layout.addWidget(hold_group)
@@ -234,15 +295,15 @@ class MainWindow(QMainWindow):
         ]
         for r, (l1, v1, l2, v2, l3, v3) in enumerate(hotkey_items):
             hotkey_layout.addWidget(QLabel(l1), r, 0, Qt.AlignRight)
-            e1 = QLineEdit(v1); e1.setFixedWidth(80)
+            e1 = QLineEdit(v1); e1.setFixedSize(30, 30)
             hotkey_layout.addWidget(e1, r, 1)
             if l2:
                 hotkey_layout.addWidget(QLabel(l2), r, 2, Qt.AlignRight)
-                e2 = QLineEdit(v2); e2.setFixedWidth(80)
+                e2 = QLineEdit(v2); e2.setFixedSize(30, 30)
                 hotkey_layout.addWidget(e2, r, 3)
             if l3:
                 hotkey_layout.addWidget(QLabel(l3), r, 4, Qt.AlignRight)
-                e3 = QLineEdit(v3); e3.setFixedWidth(80)
+                e3 = QLineEdit(v3); e3.setFixedSize(30, 30)
                 hotkey_layout.addWidget(e3, r, 5)
 
         self.hotkey_block = hotkey_layout.itemAtPosition(0, 1).widget()
@@ -262,7 +323,9 @@ class MainWindow(QMainWindow):
 
         # 秒杀技4选项
         kill4_group = QGroupBox("秒杀技4选项")
-        kill4_layout = QHBoxLayout()
+        kill4_layout = QGridLayout()
+        kill4_layout.setHorizontalSpacing(12)
+        kill4_layout.setVerticalSpacing(4)
         kill4_items = [
             ("隐身:", "kill4_stealth"),
             ("九品:", "kill4_jiupin"),
@@ -274,23 +337,29 @@ class MainWindow(QMainWindow):
             ("等待技:", "kill4_wait"),
         ]
         self.kill4_inputs = {}
-        for label, attr in kill4_items:
-            kill4_layout.addWidget(QLabel(label))
+        for idx, (label, attr) in enumerate(kill4_items):
+            col = idx * 2
+            kill4_layout.addWidget(QLabel(label), 0, col, Qt.AlignRight)
             edit = QLineEdit()
-            edit.setFixedWidth(60)
-            kill4_layout.addWidget(edit)
+            edit.setFixedSize(30, 30)
+            kill4_layout.addWidget(edit, 0, col + 1)
             self.kill4_inputs[attr] = edit
+        for i in range(len(kill4_items)):
+            kill4_layout.setColumnStretch(i * 2, 0)
+            kill4_layout.setColumnStretch(i * 2 + 1, 0)
         kill4_group.setLayout(kill4_layout)
         layout.addWidget(kill4_group)
 
-        # 鞭炮键
-        whip_group = QGroupBox("鞭炮键")
-        whip_layout = QHBoxLayout()
-        self.whip_key = QLineEdit()
-        self.whip_key.setFixedWidth(80)
-        whip_layout.addWidget(self.whip_key)
-        whip_group.setLayout(whip_layout)
-        layout.addWidget(whip_group)
+        auto_combat_group = QGroupBox("自动战斗")
+        auto_combat_layout = QVBoxLayout()
+        self.chk_auto_combat = QCheckBox("自动识别战斗状态（检测仇恨怪物并自动攻击至脱战）")
+        auto_combat_layout.addWidget(self.chk_auto_combat)
+        auto_combat_info = QLabel("开启后将自动检测角色是否进入战斗，对有仇恨的怪物持续攻击直到怪物死亡脱战")
+        auto_combat_info.setStyleSheet("color: gray; font-size: 11px;")
+        auto_combat_info.setWordWrap(True)
+        auto_combat_layout.addWidget(auto_combat_info)
+        auto_combat_group.setLayout(auto_combat_layout)
+        layout.addWidget(auto_combat_group)
 
         layout.addStretch()
         self.tabs.addTab(tab, "技能按键设置")
@@ -311,7 +380,7 @@ class MainWindow(QMainWindow):
 
         spirit_layout = QHBoxLayout()
         spirit_layout.addWidget(QLabel("喂灵设置"))
-        spirit_layout.addWidget(QLabel("看杂项2"))
+        spirit_layout.addWidget(QLabel("看设置"))
         opt_layout.addLayout(spirit_layout)
 
         opt_layout.addWidget(QLabel("单个副本死亡3次以上会自动停止并弹窗提示。"))
@@ -391,7 +460,7 @@ class MainWindow(QMainWindow):
             row = QHBoxLayout()
             row.addWidget(QLabel(f"技能{i}:"))
             skill_edit = QLineEdit()
-            skill_edit.setFixedWidth(80)
+            skill_edit.setFixedSize(30, 30)
             row.addWidget(skill_edit)
             tower_layout.addLayout(row)
             self.tower_boss_skills[i] = skill_edit
@@ -593,41 +662,40 @@ class MainWindow(QMainWindow):
         arena_layout.addWidget(self.chk_smart_arena2)
 
         mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(8)
         self.radio_arena_solo = QRadioButton("单排")
         self.radio_arena_team = QRadioButton("组队")
         self.radio_arena_1v1 = QRadioButton("1V1")
+        self.radio_arena_mode1 = QRadioButton("模式1")
+        self.radio_arena_mode2 = QRadioButton("模式2")
         self.radio_arena_solo.setChecked(True)
+        self.radio_arena_mode1.setChecked(True)
         mode_layout.addWidget(self.radio_arena_solo)
         mode_layout.addWidget(self.radio_arena_team)
         mode_layout.addWidget(self.radio_arena_1v1)
+        mode_layout.addWidget(self.radio_arena_mode1)
+        mode_layout.addWidget(self.radio_arena_mode2)
+        mode_layout.addStretch()
         arena_layout.addLayout(mode_layout)
-
-        arena_mode_layout = QHBoxLayout()
-        self.radio_arena_mode1 = QRadioButton("模式1")
-        self.radio_arena_mode2 = QRadioButton("模式2")
-        self.radio_arena_mode1.setChecked(True)
-        arena_mode_layout.addWidget(self.radio_arena_mode1)
-        arena_mode_layout.addWidget(self.radio_arena_mode2)
-        arena_layout.addLayout(arena_mode_layout)
 
         arena_group.setLayout(arena_layout)
         layout.addWidget(arena_group)
 
         battlefield_group = QGroupBox("战场")
-        bf_layout = QVBoxLayout()
+        bf_layout = QHBoxLayout()
+        bf_layout.setSpacing(10)
 
-        bf_mode = QHBoxLayout()
         self.radio_bf_solo = QRadioButton("单排")
         self.radio_bf_team = QRadioButton("组队")
         self.radio_bf_solo.setChecked(True)
-        bf_mode.addWidget(self.radio_bf_solo)
-        bf_mode.addWidget(self.radio_bf_team)
-        bf_layout.addLayout(bf_mode)
+        bf_layout.addWidget(self.radio_bf_solo)
+        bf_layout.addWidget(self.radio_bf_team)
 
         self.chk_capture_flag = QCheckBox("抢旗")
         self.chk_capture_flag.setChecked(True)
         bf_layout.addWidget(self.chk_capture_flag)
 
+        bf_layout.addStretch()
         battlefield_group.setLayout(bf_layout)
         layout.addWidget(battlefield_group)
 
@@ -849,13 +917,19 @@ class MainWindow(QMainWindow):
         poison_group.setLayout(poison_layout)
         left_layout.addWidget(poison_group)
 
+        left_layout.addStretch()
+        layout.addLayout(left_layout)
+
+        # 右侧
+        right_layout = QVBoxLayout()
+
         guild_group = QGroupBox("宗派建设任务")
         guild_layout = QHBoxLayout()
         self.chk_guild_build = QCheckBox("宗派建设任务")
         guild_layout.addWidget(self.chk_guild_build)
         guild_layout.addWidget(QLabel("打怪任务暂时只有40-45的黑风山"))
         guild_group.setLayout(guild_layout)
-        left_layout.addWidget(guild_group)
+        right_layout.addWidget(guild_group)
 
         silver_group = QGroupBox("新区10级号刷100W官银袋子")
         silver_layout = QVBoxLayout()
@@ -874,13 +948,7 @@ class MainWindow(QMainWindow):
         silver_layout.addWidget(QLabel("√这个，需要你创建好牛魔收钱号，然后进入游戏后启动，练完后会自动开始刷官银"))
 
         silver_group.setLayout(silver_layout)
-        left_layout.addWidget(silver_group)
-
-        left_layout.addStretch()
-        layout.addLayout(left_layout)
-
-        # 右侧一键任务
-        right_layout = QVBoxLayout()
+        right_layout.addWidget(silver_group)
 
         one_click_group = QGroupBox("一键任务")
         one_click_layout = QVBoxLayout()
@@ -918,15 +986,19 @@ class MainWindow(QMainWindow):
         btn_layout.addWidget(add_task_btn)
 
         task_btn = QPushButton("任务")
+        task_btn.clicked.connect(self._show_one_click_task_info)
         btn_layout.addWidget(task_btn)
 
         adjust_btn = QPushButton("调整")
+        adjust_btn.clicked.connect(self._adjust_one_click_task)
         btn_layout.addWidget(adjust_btn)
 
         order_btn = QPushButton("顺序")
+        order_btn.clicked.connect(self._sort_selected_tasks)
         btn_layout.addWidget(order_btn)
 
         down_btn = QPushButton("↓")
+        down_btn.clicked.connect(self._move_selected_task_down)
         btn_layout.addWidget(down_btn)
 
         clear_task_btn = QPushButton("清空")
@@ -949,7 +1021,7 @@ class MainWindow(QMainWindow):
         right_layout.addStretch()
         layout.addLayout(right_layout)
 
-        self.tabs.addTab(tab, "杂项1")
+        self.tabs.addTab(tab, "灵兽节日日常")
 
     def create_auction_tab(self):
         tab = QWidget()
@@ -1045,71 +1117,151 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
+        game_window_group = QGroupBox("游戏窗口设置")
+        game_window_layout = QVBoxLayout()
+
+        title_row = QHBoxLayout()
+        title_row.addWidget(QLabel("游戏窗口标题:"))
+        self.game_title_input = QLineEdit("斗战神")
+        self.game_title_input.setFixedWidth(200)
+        title_row.addWidget(self.game_title_input)
+        self.detect_window_btn = QPushButton("识别窗口")
+        self.detect_window_btn.setFixedWidth(80)
+        self.detect_window_btn.clicked.connect(self.auto_detect_game_window)
+        title_row.addWidget(self.detect_window_btn)
+        title_row.addStretch()
+        game_window_layout.addLayout(title_row)
+
+        from PyQt5.QtWidgets import QShortcut, QComboBox
+        from PyQt5.QtGui import QKeySequence
+        shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
+        shortcut.activated.connect(self.auto_detect_game_window)
+
+        # Multi-window selection row
+        window_list_row = QHBoxLayout()
+        window_list_row.addWidget(QLabel("游戏窗口列表:"))
+        self.window_list_combo = QComboBox()
+        self.window_list_combo.setMinimumWidth(300)
+        window_list_row.addWidget(self.window_list_combo)
+        self.refresh_window_btn = QPushButton("刷新列表")
+        self.refresh_window_btn.setFixedWidth(80)
+        self.refresh_window_btn.clicked.connect(self.refresh_window_list)
+        window_list_row.addWidget(self.refresh_window_btn)
+        window_list_row.addStretch()
+        game_window_layout.addLayout(window_list_row)
+
+        status_row = QHBoxLayout()
+        status_row.addWidget(QLabel("窗口状态:"))
+        self.window_status_label = QLabel("未检测")
+        self.window_status_label.setStyleSheet("color: gray;")
+        status_row.addWidget(self.window_status_label)
+        status_row.addStretch()
+        game_window_layout.addLayout(status_row)
+
+        resolution_row = QHBoxLayout()
+        resolution_row.addWidget(QLabel("固定分辨率:"))
+        self.fixed_width_input = QLineEdit("1600")
+        self.fixed_width_input.setFixedWidth(60)
+        resolution_row.addWidget(self.fixed_width_input)
+        resolution_row.addWidget(QLabel("x"))
+        self.fixed_height_input = QLineEdit("900")
+        self.fixed_height_input.setFixedWidth(60)
+        resolution_row.addWidget(self.fixed_height_input)
+        self.use_fixed_resolution_chk = QCheckBox("启用固定分辨率")
+        self.use_fixed_resolution_chk.setChecked(True)
+        resolution_row.addWidget(self.use_fixed_resolution_chk)
+        resolution_row.addStretch()
+        game_window_layout.addLayout(resolution_row)
+
+        game_window_group.setLayout(game_window_layout)
+        layout.addWidget(game_window_group)
+
         spirit_group = QGroupBox("喂灵设置 (主身)")
         spirit_layout = QGridLayout()
+        spirit_layout.setHorizontalSpacing(5)
+        spirit_layout.setVerticalSpacing(2)
+        spirit_layout.setContentsMargins(4, 4, 4, 4)
         self.spirit_checks = {}
         equipment_slots = ["帽子", "肩膀", "胸甲", "腰带", "裤子", "护腕", "手套", "鞋子", "武器"]
         for i, slot in enumerate(equipment_slots):
             chk = QCheckBox(slot)
             chk.setChecked(True)
-            spirit_layout.addWidget(chk, i // 3, i % 3)
+            spirit_layout.addWidget(chk, i // 5, i % 5)
             self.spirit_checks[f"主身_{slot}"] = chk
         spirit_group.setLayout(spirit_layout)
         layout.addWidget(spirit_group)
 
         spirit2_group = QGroupBox("喂灵设置 (元神)")
         spirit2_layout = QGridLayout()
+        spirit2_layout.setHorizontalSpacing(5)
+        spirit2_layout.setVerticalSpacing(2)
+        spirit2_layout.setContentsMargins(4, 4, 4, 4)
         for i, slot in enumerate(equipment_slots):
             chk = QCheckBox(slot)
-            spirit2_layout.addWidget(chk, i // 3, i % 3)
+            spirit2_layout.addWidget(chk, i // 5, i % 5)
             self.spirit_checks[f"元神_{slot}"] = chk
         spirit2_group.setLayout(spirit2_layout)
         layout.addWidget(spirit2_group)
 
         spirit3_group = QGroupBox("喂灵设置 (材料)")
         spirit3_layout = QGridLayout()
+        spirit3_layout.setHorizontalSpacing(5)
+        spirit3_layout.setVerticalSpacing(2)
+        spirit3_layout.setContentsMargins(4, 4, 4, 4)
         for i, slot in enumerate(equipment_slots):
             chk = QCheckBox(slot)
-            spirit3_layout.addWidget(chk, i // 3, i % 3)
+            spirit3_layout.addWidget(chk, i // 5, i % 5)
             self.spirit_checks[f"材料_{slot}"] = chk
         spirit3_group.setLayout(spirit3_layout)
         layout.addWidget(spirit3_group)
 
         misc_group = QGroupBox("其他设置")
-        misc_layout = QGridLayout()
+        misc_layout = QVBoxLayout()
+        misc_layout.setSpacing(4)
+        misc_layout.setContentsMargins(4, 4, 4, 4)
 
+        chk_row = QHBoxLayout()
+        chk_row.setSpacing(10)
         self.chk_auto_settings = QCheckBox("自动设置")
         self.chk_auto_settings.setChecked(True)
-        misc_layout.addWidget(self.chk_auto_settings, 0, 0)
+        chk_row.addWidget(self.chk_auto_settings)
 
         self.chk_auto_shutdown = QCheckBox("完成后自动关机")
-        misc_layout.addWidget(self.chk_auto_shutdown, 0, 1)
+        chk_row.addWidget(self.chk_auto_shutdown)
 
         self.chk_small_no_boss = QCheckBox("小号不去打BOSS")
         self.chk_small_no_boss.setChecked(True)
-        misc_layout.addWidget(self.chk_small_no_boss, 1, 0)
+        chk_row.addWidget(self.chk_small_no_boss)
 
         self.chk_compare_store = QCheckBox("对比存仓")
         self.chk_compare_store.setChecked(True)
-        misc_layout.addWidget(self.chk_compare_store, 1, 1)
+        chk_row.addWidget(self.chk_compare_store)
 
         self.chk_stop_no_star = QCheckBox("无锁定星停止")
         self.chk_stop_no_star.setChecked(True)
-        misc_layout.addWidget(self.chk_stop_no_star, 2, 0)
+        chk_row.addWidget(self.chk_stop_no_star)
+        chk_row.addStretch()
+        misc_layout.addLayout(chk_row)
 
-        misc_layout.addWidget(QLabel("加速倍数:"), 3, 0)
+        grid_layout = QGridLayout()
+        grid_layout.setHorizontalSpacing(10)
+        grid_layout.setVerticalSpacing(4)
+
+        grid_layout.addWidget(QLabel("加速倍数:"), 0, 0)
         self.speed_mult = QLineEdit("8")
         self.speed_mult.setFixedWidth(60)
-        misc_layout.addWidget(self.speed_mult, 3, 1)
+        grid_layout.addWidget(self.speed_mult, 0, 1)
 
-        misc_layout.addWidget(QLabel("目标数值:"), 4, 0)
+        grid_layout.addWidget(QLabel("目标数值:"), 0, 2)
         self.target_value = QLineEdit("15")
         self.target_value.setFixedWidth(60)
-        misc_layout.addWidget(self.target_value, 4, 1)
+        grid_layout.addWidget(self.target_value, 0, 3)
 
-        misc_layout.addWidget(QLabel("锁技能(例:1,4):"), 5, 0)
+        grid_layout.addWidget(QLabel("锁技能(例:1,4):"), 1, 0)
         self.lock_skills = QLineEdit("例:1,4")
-        misc_layout.addWidget(self.lock_skills, 5, 1)
+        grid_layout.addWidget(self.lock_skills, 1, 1)
+
+        misc_layout.addLayout(grid_layout)
 
         misc_group.setLayout(misc_layout)
         layout.addWidget(misc_group)
@@ -1183,15 +1335,369 @@ class MainWindow(QMainWindow):
     def clear_selected_tasks(self):
         self.selected_tasks.clear()
 
+    def _move_selected_task_down(self):
+        current_row = self.selected_tasks.currentRow()
+        if current_row < 0 or current_row >= self.selected_tasks.count() - 1:
+            return
+        item = self.selected_tasks.takeItem(current_row)
+        self.selected_tasks.insertItem(current_row + 1, item)
+        self.selected_tasks.setCurrentRow(current_row + 1)
+
+    def _sort_selected_tasks(self):
+        self.selected_tasks.sortItems()
+
+    def _show_one_click_task_info(self):
+        count = self.selected_tasks.count()
+        if count == 0:
+            QMessageBox.information(self, "一键任务", "请先从左侧添加任务到已选列表")
+            return
+        tasks = [self.selected_tasks.item(i).text() for i in range(count)]
+        QMessageBox.information(self, "一键任务", f"共 {count} 个任务:\n" + "\n".join(f"  {i+1}. {t}" for i, t in enumerate(tasks)))
+
+    def _adjust_one_click_task(self):
+        current_row = self.selected_tasks.currentRow()
+        if current_row < 0:
+            return
+        item = self.selected_tasks.currentItem()
+        from PyQt5.QtWidgets import QInputDialog
+        new_text, ok = QInputDialog.getText(self, "调整任务", "修改任务名称:", text=item.text())
+        if ok and new_text:
+            item.setText(new_text)
+
+    def _build_task_params(self):
+        """从GUI状态构建所有已启用任务的参数列表"""
+        self._collect_gui_to_config()
+        c = self.config
+        task_chain = []
+
+        self.append_log(f"[调试] 刷副本选项: {c.get_bool('刷副本选项')}")
+        self.append_log(f"[调试] 定点打怪采集选项: {c.get_bool('定点打怪采集选项')}")
+        self.append_log(f"[调试] 原地绕圈选项: {c.get_bool('原地绕圈选项')}")
+
+        combat_keys = []
+        for i in range(1, 6):
+            if i in self.click_keys:
+                key = self.click_keys[i].text().strip()
+                if key:
+                    delay = 0
+                    if i in self.click_delays:
+                        try:
+                            delay = int(self.click_delays[i].text())
+                        except ValueError:
+                            delay = 0
+                    combat_keys.append({"key": key, "delay": delay})
+
+        hold_keys = []
+        for i in range(1, 6):
+            if i in self.hold_keys:
+                key = self.hold_keys[i].text().strip()
+                if key:
+                    hold_keys.append(key)
+
+        common = {
+            "combat_keys": combat_keys,
+            "hold_keys": hold_keys,
+            "normal_attack": self.normal_attack_key.text().strip(),
+            "pickup_key": self.hotkey_pickup.text().strip() or "z",
+            "target_key": self.hotkey_target.text().strip() or "tab",
+            "follow_key": self.hotkey_follow.text().strip() or "f5",
+            "team_key": self.hotkey_team.text().strip() or "j",
+            "hp_key": c.get("HP药品键.Text", "1"),
+            "hp_threshold": c.get_float("HP阈值.Text", 0.3),
+        }
+
+        if c.get_bool("自动战斗选项"):
+            params = dict(common)
+            params.update({
+                "use_vision": True,
+                "idle_check_interval": 0.5,
+            })
+            task_chain.append(("auto_combat", params))
+
+        if c.get_bool("刷副本选项"):
+            dungeon_list = []
+            for i in range(self.dungeon_queue.count()):
+                text = self.dungeon_queue.item(i).text()
+                parts = text.split("→")
+                if len(parts) >= 3:
+                    dungeon_list.append({
+                        "name": parts[0], "difficulty": parts[1], "count": int(parts[2])
+                    })
+            if dungeon_list:
+                params = dict(common)
+                params.update({
+                    "dungeon_list": dungeon_list,
+                    "max_time_min": c.get_int("刷本设定时间.text", 9999),
+                    "use_vision": False,
+                })
+                task_chain.append(("dungeon", params))
+
+        if c.get_bool("定点打怪采集选项"):
+            coords = []
+            coord_text = c.get("坐标框.text", "")
+            for pair in coord_text.split("|"):
+                pair = pair.strip()
+                if "," in pair:
+                    parts = pair.split(",")
+                    try:
+                        coords.append((int(parts[0].strip()), int(parts[1].strip())))
+                    except (ValueError, IndexError):
+                        pass
+            params = dict(common)
+            params.update({
+                "coordinates": coords,
+                "mode": "fixed_point",
+                "use_vision": False,
+            })
+            task_chain.append(("collection", params))
+
+        if c.get_bool("矿洞挖矿选项"):
+            params = dict(common)
+            params.update({"mode": "mine", "use_vision": False})
+            task_chain.append(("collection", params))
+
+        if c.get_bool("挖宝选项"):
+            params = dict(common)
+            params.update({"mode": "dig", "use_vision": False})
+            task_chain.append(("collection", params))
+
+        if c.get_bool("原地绕圈选项"):
+            params = dict(common)
+            params.update({
+                "mode": "circle",
+                "circle_size": c.get_int("原地绕圈大小下拉框.ListIndex", 1),
+                "use_vision": False,
+            })
+            task_chain.append(("collection", params))
+
+        if c.get_bool("坐标打怪采集选项"):
+            coords = []
+            coord_text = c.get("自定义坐标.Text", "")
+            for pair in coord_text.split("|"):
+                pair = pair.strip()
+                if "," in pair:
+                    parts = pair.split(",")
+                    try:
+                        coords.append((int(parts[0].strip()), int(parts[1].strip())))
+                    except (ValueError, IndexError):
+                        pass
+            params = dict(common)
+            sub_modes = []
+            if c.get_bool("打怪选项"):
+                sub_modes.append("monster")
+            if c.get_bool("挖矿选项"):
+                sub_modes.append("mine")
+            if c.get_bool("挖草选项"):
+                sub_modes.append("herb")
+            params.update({
+                "coordinates": coords,
+                "mode": "coord_farm",
+                "sub_modes": sub_modes,
+                "circle_pickup": c.get_bool("绕圈捡物选项"),
+                "use_vision": False,
+            })
+            task_chain.append(("collection", params))
+
+        if c.get_bool("行宫刷经验选项") or c.get_bool("古兽刷经验选项") or c.get_bool("混沌入侵刷经验选项"):
+            params = dict(common)
+            exp_dungeons = []
+            if c.get_bool("行宫刷经验选项"):
+                exp_dungeons.append("行宫")
+            if c.get_bool("古兽刷经验选项"):
+                exp_dungeons.append("古兽")
+            if c.get_bool("混沌入侵刷经验选项"):
+                exp_dungeons.append("混沌入侵")
+            params.update({
+                "dungeon_list": [{"name": d, "difficulty": "普通", "count": 99} for d in exp_dungeons],
+                "max_time_min": 9999,
+                "use_vision": False,
+            })
+            task_chain.append(("dungeon", params))
+
+        if c.get_bool("刷镇妖选项"):
+            floors = []
+            if c.get_bool("镇妖1至12层"):
+                floors.append("1-12")
+            if c.get_bool("镇妖13至24层"):
+                floors.append("13-24")
+            if c.get_bool("镇妖25至36层"):
+                floors.append("25-36")
+            boss_skills = []
+            for i in range(1, 5):
+                if i in self.tower_boss_skills:
+                    sk = self.tower_boss_skills[i].text().strip()
+                    if sk:
+                        boss_skills.append(sk)
+            params = dict(common)
+            params.update({
+                "dungeon_list": [{"name": "镇妖塔", "difficulty": "普通", "count": 99}],
+                "floors": floors,
+                "boss_skills": boss_skills,
+                "is_small": c.get_bool("镇妖小号选项"),
+                "max_time_min": 9999,
+                "use_vision": False,
+            })
+            task_chain.append(("dungeon", params))
+
+        if c.get_bool("智能斗技选项") or c.get_bool("智能斗技选项二"):
+            pvp_mode = "solo"
+            if c.get_bool("斗技组队"):
+                pvp_mode = "team"
+            arena_mode = "mode1"
+            if c.get_bool("斗技模式2"):
+                arena_mode = "mode2"
+            params = dict(common)
+            params.update({
+                "pvp_mode": pvp_mode,
+                "arena_mode": arena_mode,
+                "is_1v1": c.get_bool("斗技1V1"),
+                "use_vision": False,
+            })
+            task_chain.append(("pvp_arena", params))
+
+        if c.get_bool("精炼选项"):
+            params = dict(common)
+            params.update({
+                "action": "refine",
+                "target": self.refine_target.currentText(),
+                "retreat": c.get("精炼加几回退选项.Text", "2"),
+                "use_vision": False,
+            })
+            task_chain.append(("equipment", params))
+
+        if c.get_bool("批量合成、重铸装备选项"):
+            params = dict(common)
+            params.update({
+                "action": "recast",
+                "attr1": self.recast_attr1.currentText(),
+                "attr2": self.recast_attr2.currentText(),
+                "attr3": self.recast_attr3.currentText(),
+                "skill_keep": c.get("重铸选第几个技能保留.Text", "3"),
+                "stop_count": c.get("重铸出几条目标属性停止.Text", "2"),
+                "use_vision": False,
+            })
+            task_chain.append(("equipment", params))
+
+        if c.get_bool("合玉晶石选项"):
+            jades = []
+            if c.get_bool("合二阶选项"):
+                jades.append(2)
+            if c.get_bool("合三阶选项"):
+                jades.append(3)
+            if c.get_bool("合四阶选项"):
+                jades.append(4)
+            if c.get_bool("合五阶选项"):
+                jades.append(5)
+            params = dict(common)
+            params.update({"action": "jade_combine", "jades": jades, "use_vision": False})
+            task_chain.append(("equipment", params))
+
+        enabled_tasks = []
+        for name, chk in self.task_checks.items():
+            if chk.isChecked():
+                enabled_tasks.append(name)
+        if enabled_tasks:
+            params = dict(common)
+            params.update({"task_list": enabled_tasks, "use_vision": False})
+            task_chain.append(("tasks", params))
+
+        if c.get_bool("拍卖扫货选项"):
+            params = dict(common)
+            params.update({
+                "price": c.get("拍卖扫货价格.Text"),
+                "qty": c.get("拍卖扫货数量.Text"),
+                "single_count": c.get("拍卖单一扫货次数.Text"),
+                "total_count": c.get("拍卖扫货总次数.Text"),
+                "interval": c.get_int("拍卖搜索间隔.Text", 5),
+                "use_vision": False,
+            })
+            task_chain.append(("auction", params))
+
+        one_click_count = self.selected_tasks.count()
+        if one_click_count > 0:
+            one_click_names = []
+            for i in range(one_click_count):
+                one_click_names.append(self.selected_tasks.item(i).text())
+            if one_click_names:
+                params = dict(common)
+                params.update({"one_click_tasks": one_click_names, "use_vision": False})
+                task_chain.append(("one_click", params))
+
+        return task_chain
+
     def toggle_start(self):
         if self.worker is None or not self.worker.isRunning():
+            self.append_log("[调试] 开始启动流程...")
+            self._collect_gui_to_config()
+
+            game_title = self.game_title_input.text().strip() if hasattr(self, 'game_title_input') else "斗战神"
+            if not game_title:
+                game_title = "斗战神"
+
+            self.append_log(f"[调试] 游戏窗口标题: {game_title}")
+            if self.engine.set_game_window(game_title):
+                self.append_log(f"[启动] 已定位游戏窗口: {game_title}")
+                import pygetwindow as gw
+                wins = gw.getWindowsWithTitle(game_title)
+                if wins:
+                    w = wins[0]
+                    self.window_status_label.setText(
+                        f"已绑定: {w.title} ({w.width}x{w.height})"
+                    )
+                    self.window_status_label.setStyleSheet("color: green;")
+            else:
+                self.append_log(f"[警告] 未找到游戏窗口 '{game_title}'，将使用全屏模式")
+                self.window_status_label.setText("未找到游戏窗口")
+                self.window_status_label.setStyleSheet("color: red;")
+
+            task_chain = self._build_task_params()
+            self.append_log(f"[调试] 构建的任务链: {len(task_chain)} 个任务")
+
+            one_click_count = self.selected_tasks.count()
+            if one_click_count > 0:
+                one_click_tasks = []
+                for i in range(one_click_count):
+                    one_click_tasks.append(self.selected_tasks.item(i).text())
+                self.log_signal.emit(f"[一键任务] 已选 {len(one_click_tasks)} 个: {', '.join(one_click_tasks)}")
+
+            if not task_chain:
+                self.log_signal.emit("[启动] 未选择任何任务，请在各标签页勾选要执行的功能")
+                self.append_log("[调试] 任务链为空，请检查GUI选项是否勾选")
+                return
+
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
             self.start_btn.setText("运行中...")
             self.status_label.setText("正在执行任务...")
-            self.log_signal.emit("[启动] 开始执行自动化任务")
+
+            task_names = [t[0] for t in task_chain]
+            self.log_signal.emit(f"[启动] 任务链: {', '.join(task_names)}")
+
+            if len(task_chain) == 1:
+                name, params = task_chain[0]
+                self.worker = WorkerThread(self.engine, name, params)
+            else:
+                self.worker = TaskChainWorker(self.engine, task_chain)
+
+            self.worker.log_signal.connect(self.append_log)
+            self.worker.status_signal.connect(self.status_label.setText)
+            self.worker.finished_signal.connect(self._on_worker_finished)
+            self.worker.start()
         else:
             self.stop_all()
+
+    def _on_worker_finished(self, success):
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.start_btn.setText("启动 (F10)")
+        if success:
+            self.status_label.setText("已完成")
+            self.log_signal.emit("[完成] 所有任务执行完毕")
+        else:
+            self.status_label.setText("执行出错")
+        if self.config.get_bool("自动关机选项"):
+            self.log_signal.emit("[关机] 任务完成，准备关机...")
+            os.system("shutdown -s -t 60")
 
     def stop_all(self):
         if self.worker and self.worker.isRunning():
@@ -1228,8 +1734,11 @@ class MainWindow(QMainWindow):
         return super().nativeEvent(eventType, message)
 
     def closeEvent(self, event):
+        self.stop_all()
         self._unregister_hotkeys()
-        super().closeEvent(event)
+        self._collect_gui_to_config()
+        self.config.save(self.config.get_config_path())
+        event.accept()
 
     def append_log(self, text):
         timestamp = time.strftime("%H:%M:%S")
@@ -1242,21 +1751,157 @@ class MainWindow(QMainWindow):
             self.config.load(config_path)
             self.log_signal.emit(f"已加载配置: {config_path}")
 
+    def refresh_window_list(self):
+        """刷新游戏窗口列表"""
+        self.window_list_combo.clear()
+        titles = ["斗战神", "DZS", "dzs", "fps:"]
+        game_title = self.game_title_input.text().strip()
+        if game_title and game_title not in titles:
+            titles.insert(0, game_title)
+
+        import pygetwindow as gw
+        import os
+        import ctypes
+        my_pid = os.getpid()
+        found_windows = []
+
+        for title in titles:
+            windows = gw.getWindowsWithTitle(title)
+            for win in windows:
+                if win.title == self.windowTitle():
+                    continue
+                try:
+                    hwnd = win._hWnd
+                    pid_val = ctypes.c_ulong()
+                    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_val))
+                    if pid_val.value == my_pid:
+                        continue
+                except Exception:
+                    pass
+                if win.title not in found_windows:
+                    found_windows.append(win.title)
+                    display_text = f"{win.title} ({win.width}x{win.height})"
+                    self.window_list_combo.addItem(display_text, win.title)
+
+        if found_windows:
+            self.log_signal.emit(f"[窗口] 发现 {len(found_windows)} 个游戏窗口")
+        else:
+            self.log_signal.emit("[窗口] 未发现游戏窗口")
+
+    def auto_detect_game_window(self):
+        # If a specific window is selected in the combo box, bind to it
+        if self.window_list_combo.count() > 0:
+            idx = self.window_list_combo.currentIndex()
+            if idx >= 0:
+                selected_title = self.window_list_combo.itemData(idx)
+                if selected_title:
+                    return self._bind_to_window(selected_title)
+
+        # Fall back to auto-detect first matching window
+        titles = ["斗战神", "DZS", "dzs", "fps:"]
+        game_title = self.game_title_input.text().strip()
+        if game_title and game_title not in titles:
+            titles.insert(0, game_title)
+
+        import pygetwindow as gw
+        import os
+        import ctypes
+        my_pid = os.getpid()
+        for title in titles:
+            windows = gw.getWindowsWithTitle(title)
+            for win in windows:
+                if win.title == self.windowTitle():
+                    continue
+                try:
+                    hwnd = win._hWnd
+                    pid_val = ctypes.c_ulong()
+                    ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_val))
+                    if pid_val.value == my_pid:
+                        continue
+                except Exception:
+                    pass
+                return self._bind_to_window(title, win)
+
+        self.window_status_label.setText("未找到游戏窗口")
+        self.window_status_label.setStyleSheet("color: red;")
+        self.log_signal.emit("[窗口] 未找到游戏窗口，请确认游戏已启动")
+        return False
+
+    def _bind_to_window(self, title, win=None):
+        """绑定到指定窗口"""
+        import pygetwindow as gw
+        import ctypes
+
+        # Find the window if not provided
+        if win is None:
+            windows = gw.getWindowsWithTitle(title)
+            for w in windows:
+                if w.title == title:
+                    win = w
+                    break
+
+        if win is None:
+            self.window_status_label.setText("未找到指定窗口")
+            self.window_status_label.setStyleSheet("color: red;")
+            return False
+
+        # Get fixed resolution if enabled
+        fixed_width = None
+        fixed_height = None
+        if self.use_fixed_resolution_chk.isChecked():
+            try:
+                fixed_width = int(self.fixed_width_input.text())
+                fixed_height = int(self.fixed_height_input.text())
+            except ValueError:
+                pass
+
+        if self.engine.set_game_window(title, fixed_width, fixed_height):
+            w = fixed_width if fixed_width else win.width
+            h = fixed_height if fixed_height else win.height
+            self.window_status_label.setText(
+                f"已绑定: {win.title} ({w}x{h})"
+            )
+            self.window_status_label.setStyleSheet("color: green;")
+            self.game_title_input.setText(title)
+            self.log_signal.emit(f"[窗口] 已自动识别并绑定: {win.title} ({w}x{h})")
+            return True
+
+        self.window_status_label.setText("绑定失败")
+        self.window_status_label.setStyleSheet("color: red;")
+        return False
+
     def load_config_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "加载配置", "", "INI Files (*.ini);;All Files (*)")
         if path:
-            self.config.load(path)
-            self.config_path.setText(path)
-            self._apply_config_to_gui()
-            self.log_signal.emit(f"已加载配置: {path}")
+            try:
+                self.config.load(path)
+                self.config_path.setText(path)
+                self._apply_config_to_gui()
+                self.log_signal.emit(f"已加载配置: {path}")
+            except Exception as e:
+                QMessageBox.critical(self, "加载配置失败", f"加载配置时出错:\n{e}")
 
     def save_config_file(self):
         path, _ = QFileDialog.getSaveFileName(self, "保存配置", "", "INI Files (*.ini);;All Files (*)")
         if path:
+            try:
+                self._collect_gui_to_config()
+                self.config.save(path)
+                self.config_path.setText(path)
+                self.log_signal.emit(f"已保存配置: {path}")
+            except Exception as e:
+                QMessageBox.critical(self, "保存配置失败", f"保存配置时出错:\n{e}")
+
+    def save_config_auto(self):
+        try:
             self._collect_gui_to_config()
-            self.config.save(path)
-            self.config_path.setText(path)
-            self.log_signal.emit(f"已保存配置: {path}")
+            config_path = self.config.get_config_path()
+            self.config.save(config_path)
+            self.append_log(f"[保存] 配置已保存到: {config_path}")
+            self.statusBar().showMessage("配置已保存", 3000)
+        except Exception as e:
+            QMessageBox.critical(self, "保存配置失败", f"保存配置时出错:\n{e}")
+            self.append_log(f"[保存] 配置保存失败: {e}")
 
     def _apply_config_to_gui(self):
         c = self.config
@@ -1299,8 +1944,8 @@ class MainWindow(QMainWindow):
         self.kill4_inputs["kill4_refresh"].setText(c.get("秒杀技4刷新技"))
         self.kill4_inputs["kill4_wait"].setText(c.get("秒杀技4等待技"))
 
-        # 鞭炮键
-        self.whip_key.setText(c.get("鞭炮键.Text"))
+        # 自动战斗
+        self.chk_auto_combat.setChecked(c.get_bool("自动战斗选项"))
 
         # 镇妖设置
         for i in range(1, 5):
@@ -1410,7 +2055,7 @@ class MainWindow(QMainWindow):
             if name in self.task_checks:
                 self.task_checks[name].setChecked(c.get_bool(cfg_key))
 
-        # 杂项1
+        # 灵兽节日日常
         self.baby_speed_mult.setText(c.get("变数器倍数.Text"))
         self.lock_skills_misc.setText(c.get("锁技能选项.Text", "例:1,4"))
         self.chk_jade2_misc.setChecked(c.get_bool("合二阶选项"))
@@ -1446,6 +2091,16 @@ class MainWindow(QMainWindow):
         self.speed_mult.setText(c.get("加速倍数选项.Text", "8"))
         self.target_value.setText(c.get("目标数值选项.Text", "15"))
         self.lock_skills.setText(c.get("锁技能选项.Text", "例:1,4"))
+        game_title = c.get("游戏窗口标题.Text", "斗战神")
+        if game_title:
+            self.game_title_input.setText(game_title)
+        
+        # 固定分辨率设置
+        fixed_width = c.get("固定分辨率宽度.Text", "1600")
+        fixed_height = c.get("固定分辨率高度.Text", "900")
+        self.fixed_width_input.setText(fixed_width)
+        self.fixed_height_input.setText(fixed_height)
+        self.use_fixed_resolution_chk.setChecked(c.get_bool("使用固定分辨率选项", True))
 
         equipment_slots = ["帽子", "肩膀", "胸甲", "腰带", "裤子", "护腕", "手套", "鞋子", "武器"]
         for slot in equipment_slots:
@@ -1494,8 +2149,8 @@ class MainWindow(QMainWindow):
         c.set("秒杀技4刷新技", self.kill4_inputs["kill4_refresh"].text())
         c.set("秒杀技4等待技", self.kill4_inputs["kill4_wait"].text())
 
-        # 鞭炮键
-        c.set("鞭炮键.Text", self.whip_key.text())
+        # 自动战斗
+        c.set_bool("自动战斗选项", self.chk_auto_combat.isChecked())
 
         # 镇妖设置
         for i in range(1, 5):
@@ -1605,7 +2260,7 @@ class MainWindow(QMainWindow):
             if name in self.task_checks:
                 c.set_bool(cfg_key, self.task_checks[name].isChecked())
 
-        # 杂项1
+        # 灵兽节日日常
         c.set("变数器倍数.Text", self.baby_speed_mult.text())
         c.set("锁技能选项.Text", self.lock_skills_misc.text())
         c.set_bool("合二阶选项", self.chk_jade2_misc.isChecked())
@@ -1641,18 +2296,18 @@ class MainWindow(QMainWindow):
         c.set("加速倍数选项.Text", self.speed_mult.text())
         c.set("目标数值选项.Text", self.target_value.text())
         c.set("锁技能选项.Text", self.lock_skills.text())
+        c.set("游戏窗口标题.Text", self.game_title_input.text())
+        
+        # 固定分辨率设置
+        c.set("固定分辨率宽度.Text", self.fixed_width_input.text())
+        c.set("固定分辨率高度.Text", self.fixed_height_input.text())
+        c.set_bool("使用固定分辨率选项", self.use_fixed_resolution_chk.isChecked())
 
         equipment_slots = ["帽子", "肩膀", "胸甲", "腰带", "裤子", "护腕", "手套", "鞋子", "武器"]
         for slot in equipment_slots:
             c.set_bool(f"主身喂灵{slot}自定义", self.spirit_checks[f"主身_{slot}"].isChecked())
             c.set_bool(f"元神喂灵{slot}自定义", self.spirit_checks[f"元神_{slot}"].isChecked())
             c.set_bool(f"材料喂灵{slot}自定义", self.spirit_checks[f"材料_{slot}"].isChecked())
-
-    def closeEvent(self, event):
-        self.stop_all()
-        self._collect_gui_to_config()
-        self.config.save(self.config.get_config_path())
-        event.accept()
 
     def check_update(self):
         self.check_update_btn.setEnabled(False)

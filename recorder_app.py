@@ -104,6 +104,13 @@ class RecorderApp(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("小狼录制助手 - 独立录制后端")
+        if getattr(sys, 'frozen', False):
+            base_dir = os.path.dirname(sys.executable)
+        else:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(base_dir, "app_icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
         self.setMinimumSize(700, 550)
         self.resize(750, 600)
 

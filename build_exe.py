@@ -24,6 +24,7 @@ def build():
         "--onedir",
         "--windowed",
         "--name", APP_NAME,
+        "--icon", "app_icon.ico",
         "--distpath", DIST_DIR,
         "--workpath", BUILD_DIR,
         "--specpath", PROJECT_DIR,
@@ -44,6 +45,12 @@ def build():
 
     if result.returncode == 0:
         exe_path = os.path.join(DIST_DIR, APP_NAME, f"{APP_NAME}.exe")
+        icon_src = os.path.join(PROJECT_DIR, "app_icon.ico")
+        icon_dst = os.path.join(DIST_DIR, APP_NAME, "app_icon.ico")
+        if os.path.exists(icon_src):
+            import shutil
+            shutil.copy2(icon_src, icon_dst)
+            print(f"已复制应用图标: {icon_dst}")
         print(f"\n打包成功!")
         print(f"输出目录: {os.path.join(DIST_DIR, APP_NAME)}")
         print(f"可执行文件: {exe_path}")

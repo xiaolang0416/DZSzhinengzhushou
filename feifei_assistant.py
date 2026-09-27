@@ -146,7 +146,6 @@ class MainWindow(QMainWindow):
 
         self.create_combat_tab()
         self.create_dungeon_tab()
-        self.create_collection_tab()
         self.create_pvp_tab()
         self.create_equipment_tab()
         self.create_task_tab()
@@ -611,47 +610,6 @@ class MainWindow(QMainWindow):
         layout.addLayout(right_layout)
 
         self.tabs.addTab(tab, "打怪采集刷本")
-
-    def create_collection_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        mode_group = QGroupBox("采集模式")
-        mode_layout = QVBoxLayout()
-
-        self.chk_fixed_point = QCheckBox("定点打怪采集")
-        mode_layout.addWidget(self.chk_fixed_point)
-
-        coord_layout = QHBoxLayout()
-        coord_layout.addWidget(QLabel("坐标:"))
-        self.coord_input = QLineEdit("x,y|x,y|x,y")
-        coord_layout.addWidget(self.coord_input)
-        mode_layout.addLayout(coord_layout)
-
-        self.chk_mine = QCheckBox("矿洞挖矿")
-        mode_layout.addWidget(self.chk_mine)
-
-        self.chk_dig = QCheckBox("挖宝")
-        self.chk_dig.setChecked(True)
-        mode_layout.addWidget(self.chk_dig)
-
-        mode_group.setLayout(mode_layout)
-        layout.addWidget(mode_group)
-
-        circle_group = QGroupBox("原地绕圈")
-        circle_layout = QHBoxLayout()
-        self.chk_circle = QCheckBox("启用原地绕圈")
-        circle_layout.addWidget(self.chk_circle)
-        circle_layout.addWidget(QLabel("大小:"))
-        self.circle_size = QComboBox()
-        self.circle_size.addItems(["小", "中", "大"])
-        self.circle_size.setCurrentIndex(1)
-        circle_layout.addWidget(self.circle_size)
-        circle_group.setLayout(circle_layout)
-        layout.addWidget(circle_group)
-
-        layout.addStretch()
-        self.tabs.addTab(tab, "采集")
 
     def create_pvp_tab(self):
         tab = QWidget()
@@ -1378,8 +1336,6 @@ class MainWindow(QMainWindow):
         task_chain = []
 
         self.append_log(f"[调试] 刷副本选项: {c.get_bool('刷副本选项')}")
-        self.append_log(f"[调试] 定点打怪采集选项: {c.get_bool('定点打怪采集选项')}")
-        self.append_log(f"[调试] 原地绕圈选项: {c.get_bool('原地绕圈选项')}")
 
         combat_keys = []
         for i in range(1, 6):
@@ -1438,44 +1394,6 @@ class MainWindow(QMainWindow):
                     "use_vision": False,
                 })
                 task_chain.append(("dungeon", params))
-
-        if c.get_bool("定点打怪采集选项"):
-            coords = []
-            coord_text = c.get("坐标框.text", "")
-            for pair in coord_text.split("|"):
-                pair = pair.strip()
-                if "," in pair:
-                    parts = pair.split(",")
-                    try:
-                        coords.append((int(parts[0].strip()), int(parts[1].strip())))
-                    except (ValueError, IndexError):
-                        pass
-            params = dict(common)
-            params.update({
-                "coordinates": coords,
-                "mode": "fixed_point",
-                "use_vision": False,
-            })
-            task_chain.append(("collection", params))
-
-        if c.get_bool("矿洞挖矿选项"):
-            params = dict(common)
-            params.update({"mode": "mine", "use_vision": False})
-            task_chain.append(("collection", params))
-
-        if c.get_bool("挖宝选项"):
-            params = dict(common)
-            params.update({"mode": "dig", "use_vision": False})
-            task_chain.append(("collection", params))
-
-        if c.get_bool("原地绕圈选项"):
-            params = dict(common)
-            params.update({
-                "mode": "circle",
-                "circle_size": c.get_int("原地绕圈大小下拉框.ListIndex", 1),
-                "use_vision": False,
-            })
-            task_chain.append(("collection", params))
 
         if c.get_bool("坐标打怪采集选项"):
             coords = []
@@ -1995,14 +1913,6 @@ class MainWindow(QMainWindow):
         self.chk_four_kings.setChecked(c.get_bool("四大天王刷经验"))
         self.chk_four_kings_dual.setChecked(c.get_bool("四大天王主副双修"))
 
-        # 采集模式
-        self.chk_fixed_point.setChecked(c.get_bool("定点打怪采集选项"))
-        self.coord_input.setText(c.get("坐标框.Text", "x,y|x,y|x,y"))
-        self.chk_mine.setChecked(c.get_bool("矿洞挖矿选项"))
-        self.chk_dig.setChecked(c.get_bool("挖宝选项"))
-        self.chk_circle.setChecked(c.get_bool("原地绕圈选项"))
-        self.circle_size.setCurrentIndex(c.get_int("原地绕圈大小下拉框.ListIndex", 1))
-
         # PvP
         self.chk_smart_arena.setChecked(c.get_bool("智能斗技选项"))
         self.chk_smart_arena2.setChecked(c.get_bool("智能斗技选项二"))
@@ -2199,14 +2109,6 @@ class MainWindow(QMainWindow):
         c.set_bool("全自动大蜘蛛英雄任务", self.chk_spider_hero.isChecked())
         c.set_bool("四大天王刷经验", self.chk_four_kings.isChecked())
         c.set_bool("四大天王主副双修", self.chk_four_kings_dual.isChecked())
-
-        # 采集模式
-        c.set_bool("定点打怪采集选项", self.chk_fixed_point.isChecked())
-        c.set("坐标框.Text", self.coord_input.text())
-        c.set_bool("矿洞挖矿选项", self.chk_mine.isChecked())
-        c.set_bool("挖宝选项", self.chk_dig.isChecked())
-        c.set_bool("原地绕圈选项", self.chk_circle.isChecked())
-        c.set("原地绕圈大小下拉框.ListIndex", str(self.circle_size.currentIndex()))
 
         # PvP
         c.set_bool("智能斗技选项", self.chk_smart_arena.isChecked())

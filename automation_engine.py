@@ -454,6 +454,62 @@ class AutomationEngine:
         except Exception as e:
             log(f"[移动] 移动异常: {e}")
 
+    def _parse_lock_slots(self, raw):
+        """解析'锁技能选项'(如 '1,4')为技能槽位集合。占位文本(例:...)或空 -> 空集合"""
+        if not raw:
+            return set()
+        s = str(raw)
+        if "例" in s or ":" in s and not any(ch.isdigit() for ch in s.replace(":", "")):
+            # 形如 '例:1,4' 的占位提示，忽略
+            if "例" in s:
+                return set()
+        slots = set()
+        for part in s.replace("，", ",").split(","):
+            part = part.strip()
+            if part.isdigit():
+                slots.add(int(part))
+        return slots
+
+    def _aim_at_monster(self, monster_pos):
+        """把鼠标移动到怪物的屏幕位置(不点击)，用于无锁定/方向型技能瞄准"""
+        if not monster_pos or not self._recognizer or not self._recognizer._game_region:
+            return
+        gr = self._recognizer._game_region
+        self._move_to(gr["left"] + monster_pos[0], gr["top"] + monster_pos[1], duration=0.03)
+
+    def _cast_combat_keys(self, params, running, log, monster_pos, lock_slots):
+        """
+        施放一轮技能，按锁技能配置区分处理：
+          - 有锁定型槽位且发现怪物：先按一次切换目标键锁定目标
+          - 锁定型技能：需已选中目标，无目标则跳过，避免空放
+          - 无锁定/方向型技能：施法前把鼠标移到怪物位置瞄准
+        stop_no_lock 开启且当前无怪物时，跳过无锁定技能(避免空放)。
+        """
+        combat_keys = params.get("combat_keys", [])
+        target_key = params.get("target_key", "tab")
+        stop_no_lock = params.get("stop_no_lock", False)
+        if lock_slots and monster_pos and target_key:
+            self._press_key(target_key)
+            time.sleep(0.05)
+        for idx, key_info in enumerate(combat_keys):
+            if not running():
+                break
+            key = key_info.get("key", "")
+            if not key:
+                continue
+            slot = idx + 1
+            if slot in lock_slots:
+                if not monster_pos:
+                    continue
+            else:
+                if monster_pos:
+                    self._aim_at_monster(monster_pos)
+                elif stop_no_lock:
+                    continue
+            self._press_key(key)
+            delay = key_info.get("delay", 0)
+            time.sleep(delay / 1000.0 if delay > 0 else 0.08)
+
     def _auto_fight_monster(self, params, running, log, max_fight_time=60):
         """
         自动攻击怪物直到死亡
@@ -469,10 +525,13 @@ class AutomationEngine:
         target_key = params.get("target_key", "tab")
         hp_key = params.get("hp_key", "1")
         hp_threshold = params.get("hp_threshold", 0.3)
+        lock_slots = self._parse_lock_slots(params.get("lock_skills", ""))
 
         fight_start = time.time()
         attack_count = 0
         last_hp = self._check_hp()
+        last_mpos = None
+        last_mpos_time = 0.0
 
         log("[战斗] 开始攻击怪物")
 
@@ -484,15 +543,14 @@ class AutomationEngine:
             for key in hold_keys:
                 self._hold_key(key)
 
-            for key_info in combat_keys:
-                if not running():
-                    break
-                key = key_info.get("key", "")
-                key_delay = key_info.get("delay", 0)
-                if key:
-                    self._press_key(key)
-                    delay_sec = key_delay / 1000.0 if key_delay > 0 else 0.08
-                    time.sleep(delay_sec)
+            # 施法前检测怪物位置；血条会闪烁，短时间内沿用上次位置以免中断输出
+            now = time.time()
+            monster_pos = self._detect_monster_with_aggro()
+            if monster_pos:
+                last_mpos, last_mpos_time = monster_pos, now
+            elif last_mpos and (now - last_mpos_time) <= 1.5:
+                monster_pos = last_mpos
+            self._cast_combat_keys(params, running, log, monster_pos, lock_slots)
 
             for key in hold_keys:
                 self._release_key(key)
@@ -500,11 +558,6 @@ class AutomationEngine:
             if normal_attack:
                 self._press_key(normal_attack)
                 time.sleep(0.05)
-
-            # 定期切换目标（确保攻击当前仇恨怪物）
-            if attack_count % 10 == 0 and target_key:
-                self._press_key(target_key)
-                time.sleep(0.1)
 
             attack_count += 1
 
@@ -657,19 +710,14 @@ class AutomationEngine:
         normal_attack = params.get("normal_attack", "")
         target_key = params.get("target_key", "tab")
         pickup_key = params.get("pickup_key", "z")
+        lock_slots = self._parse_lock_slots(params.get("lock_skills", ""))
 
         for key in hold_keys:
             self._hold_key(key)
 
-        for key_info in combat_keys:
-            if not running():
-                break
-            key = key_info.get("key", "")
-            key_delay = key_info.get("delay", 0)
-            if key:
-                self._press_key(key)
-                delay_sec = key_delay / 1000.0 if key_delay > 0 else 0.08
-                time.sleep(delay_sec)
+        # 施法前检测怪物位置，按锁技能配置锁定/瞄准后释放
+        monster_pos = self._detect_monster_with_aggro() if self._recognizer else None
+        self._cast_combat_keys(params, running, log, monster_pos, lock_slots)
 
         for key in hold_keys:
             self._release_key(key)
@@ -678,7 +726,8 @@ class AutomationEngine:
             self._press_key(normal_attack)
             time.sleep(0.05)
 
-        if target_key:
+        # 未配置锁技能时保留原有的每循环切换目标行为
+        if not lock_slots and target_key:
             self._press_key(target_key)
             time.sleep(0.1)
 

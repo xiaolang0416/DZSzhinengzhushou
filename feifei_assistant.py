@@ -1505,6 +1505,8 @@ class MainWindow(QMainWindow):
             "team_key": self.hotkey_team.text().strip() or "j",
             "hp_key": c.get("HP药品键.Text", "1"),
             "hp_threshold": c.get_float("HP阈值.Text", 0.3),
+            "lock_skills": c.get("锁技能选项.Text", ""),
+            "stop_no_lock": c.get_bool("无锁定星停止"),
             "hp_region": [
                 self.hp_region_x.value(), self.hp_region_y.value(),
                 self.hp_region_w.value(), self.hp_region_h.value(),

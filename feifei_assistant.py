@@ -38,6 +38,91 @@ HOTKEY_STOP = 2
 user32 = ctypes.windll.user32
 
 
+class GameOverlay(QWidget):
+    """游戏吸附悬浮窗，显示在游戏窗口左上角"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint |
+            Qt.Tool | Qt.WindowTransparentForInput
+        )
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(5, 5, 5, 5)
+        self._layout.setSpacing(2)
+
+        self.version_label = QLabel(f"Ver:{APP_VERSION}")
+        self.version_label.setStyleSheet("color: #00ff00; font-size: 13px; font-weight: bold;")
+
+        self.time_label = QLabel("")
+        self.time_label.setStyleSheet("color: #ff3333; font-size: 13px; font-weight: bold;")
+
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #ff69b4; font-size: 13px; font-weight: bold;")
+
+        self.task_label = QLabel("")
+        self.task_label.setStyleSheet("color: #ff3333; font-size: 13px; font-weight: bold;")
+
+        self._layout.addWidget(self.version_label)
+        self._layout.addWidget(self.time_label)
+        self._layout.addWidget(self.status_label)
+        self._layout.addWidget(self.task_label)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._update_time)
+
+        self._pos_timer = QTimer(self)
+        self._pos_timer.timeout.connect(self._reposition)
+        self._game_hwnd = None
+
+    def start_overlay(self, game_hwnd=None):
+        self._game_hwnd = game_hwnd
+        self._update_time()
+        self.status_label.setText("正常运行中")
+        self.task_label.setText("")
+        self._timer.start(1000)
+        self._pos_timer.start(500)
+        self._reposition()
+        self.show()
+
+    def stop_overlay(self):
+        self._timer.stop()
+        self._pos_timer.stop()
+        self.hide()
+
+    def set_task_text(self, text):
+        self.task_label.setText(text)
+
+    def set_status_text(self, text):
+        self.status_label.setText(text)
+
+    def _update_time(self):
+        self.time_label.setText(time.strftime("%H:%M:%S"))
+
+    def _reposition(self):
+        if self._game_hwnd:
+            rect = ctypes.wintypes.RECT()
+            if user32.GetWindowRect(self._game_hwnd, ctypes.byref(rect)):
+                self.move(rect.left + 10, rect.top + 10)
+                return
+        try:
+            import pygetwindow as gw
+            game_title = "斗战神"
+            if self.parent() and hasattr(self.parent(), 'game_title_input'):
+                t = self.parent().game_title_input.text().strip()
+                if t:
+                    game_title = t
+            wins = gw.getWindowsWithTitle(game_title)
+            if wins:
+                w = wins[0]
+                self.move(w.left + 10, w.top + 10)
+        except Exception:
+            pass
+
+
 class WorkerThread(QThread):
     """后台工作线程，执行自动化任务"""
     log_signal = pyqtSignal(str)
@@ -107,6 +192,7 @@ class MainWindow(QMainWindow):
         self.protection = Protection()
         self.worker = None
         self.running_tasks = {}
+        self.overlay = GameOverlay(self)
 
         self.log_signal.connect(self.append_log)
         self.init_ui()
@@ -1612,13 +1698,17 @@ class MainWindow(QMainWindow):
                 self.worker = TaskChainWorker(self.engine, task_chain)
 
             self.worker.log_signal.connect(self.append_log)
-            self.worker.status_signal.connect(self.status_label.setText)
+            self.worker.status_signal.connect(self._on_status_update)
             self.worker.finished_signal.connect(self._on_worker_finished)
             self.worker.start()
+
+            game_hwnd = user32.FindWindowW(None, game_title)
+            self.overlay.start_overlay(game_hwnd if game_hwnd else None)
         else:
             self.stop_all()
 
     def _on_worker_finished(self, success):
+        self.overlay.stop_overlay()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.start_btn.setText("启动 (F10)")
@@ -1631,11 +1721,16 @@ class MainWindow(QMainWindow):
             self.log_signal.emit("[关机] 任务完成，准备关机...")
             os.system("shutdown -s -t 60")
 
+    def _on_status_update(self, text):
+        self.status_label.setText(text)
+        self.overlay.set_status_text(text)
+
     def stop_all(self):
         if self.worker and self.worker.isRunning():
             self.worker.stop()
             self.worker.wait(3000)
         self.worker = None
+        self.overlay.stop_overlay()
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.start_btn.setText("启动 (F10)")

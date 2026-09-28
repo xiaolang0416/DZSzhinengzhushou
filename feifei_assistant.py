@@ -1835,9 +1835,44 @@ class MainWindow(QMainWindow):
         self.log_signal.emit("[停止] 所有任务已停止")
 
     def _register_hotkeys(self):
+        # 窗口内快捷键兜底：即使全局热键被高完整性窗口(管理员运行的游戏)屏蔽，
+        # 助手窗口获得焦点时仍可响应 F10/F11
+        try:
+            from PyQt5.QtWidgets import QShortcut
+            from PyQt5.QtGui import QKeySequence
+            if not hasattr(self, "_sc_start"):
+                self._sc_start = QShortcut(QKeySequence("F10"), self)
+                self._sc_start.activated.connect(self.toggle_start)
+                self._sc_stop = QShortcut(QKeySequence("F11"), self)
+                self._sc_stop.activated.connect(self.stop_all)
+        except Exception:
+            pass
+
+        # 全局热键：需要与游戏同完整性级别(通常以管理员运行)才能在游戏前台时生效
+        user32.RegisterHotKey.argtypes = [ctypes.wintypes.HWND, ctypes.wintypes.UINT,
+                                          ctypes.wintypes.UINT, ctypes.wintypes.UINT]
+        user32.RegisterHotKey.restype = ctypes.wintypes.BOOL
         hwnd = int(self.winId())
-        user32.RegisterHotKey(hwnd, HOTKEY_START, MOD_NONE, VK_F10)
-        user32.RegisterHotKey(hwnd, HOTKEY_STOP, MOD_NONE, VK_F11)
+        r1 = user32.RegisterHotKey(hwnd, HOTKEY_START, MOD_NONE, VK_F10)
+        e1 = ctypes.GetLastError()
+        r2 = user32.RegisterHotKey(hwnd, HOTKEY_STOP, MOD_NONE, VK_F11)
+        e2 = ctypes.GetLastError()
+        self._hotkey_ok = bool(r1 and r2)
+
+        is_admin = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        if not self._hotkey_ok:
+            self.log_signal.emit(
+                "[热键] 全局热键注册失败"
+                f"(F10:ret={r1},err={e1}; F11:ret={r2},err={e2})，"
+                "可能已有其他实例占用，或存在同名系统热键。"
+            )
+        if not is_admin:
+            self.log_signal.emit(
+                "[热键] 警告: 当前非管理员运行。若游戏以管理员运行，"
+                "游戏前台时 F10/F11 全局热键将被系统拦截而无法触发，请右键“以管理员身份运行”。"
+            )
+        else:
+            self.log_signal.emit("[热键] 全局热键 F10 启动 / F11 停止 已注册")
 
     def _unregister_hotkeys(self):
         hwnd = int(self.winId())

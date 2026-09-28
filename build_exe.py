@@ -7,7 +7,7 @@ import sys
 import subprocess
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(PROJECT_DIR, "dist_new13")
+DIST_DIR = os.path.join(PROJECT_DIR, "dist_new14")
 BUILD_DIR = os.path.join(PROJECT_DIR, "build")
 SPEC_FILE = os.path.join(PROJECT_DIR, "feifei_assistant.spec")
 
@@ -23,6 +23,7 @@ def build():
         "--noconfirm",
         "--onedir",
         "--windowed",
+        "--uac-admin",
         "--name", APP_NAME,
         "--icon", "app_icon.ico",
         "--distpath", DIST_DIR,

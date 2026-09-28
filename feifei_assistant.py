@@ -294,35 +294,42 @@ class MainWindow(QMainWindow):
         hotkey_layout.setVerticalSpacing(6)
 
         hotkey_items = [
-            ("格挡键:", "r", "跟随键:", "f5", "秒杀技1:", "2"),
-            ("受身键:", "e", "拣物键:", "z", "秒杀技2:", "f"),
-            ("打断后摇键:", "", "组队键:", "j", "秒杀技3:", "q"),
-            ("切换目标:", "tab", "", "", "秒杀技4:", ""),
+            ("上:", "w", "格挡键:", "r", "跟随键:", "f5", "秒杀技1:", "2"),
+            ("左:", "a", "受身键:", "e", "拣物键:", "z", "秒杀技2:", "f"),
+            ("下:", "s", "打断后摇键:", "", "组队键:", "j", "秒杀技3:", "q"),
+            ("右:", "d", "切换目标:", "tab", "", "", "秒杀技4:", ""),
         ]
-        for r, (l1, v1, l2, v2, l3, v3) in enumerate(hotkey_items):
-            hotkey_layout.addWidget(QLabel(l1), r, 0, Qt.AlignRight)
+        for r, (l0, v0, l1, v1, l2, v2, l3, v3) in enumerate(hotkey_items):
+            hotkey_layout.addWidget(QLabel(l0), r, 0, Qt.AlignRight)
+            e0 = QLineEdit(v0); e0.setFixedSize(30, 30)
+            hotkey_layout.addWidget(e0, r, 1)
+            hotkey_layout.addWidget(QLabel(l1), r, 2, Qt.AlignRight)
             e1 = QLineEdit(v1); e1.setFixedSize(30, 30)
-            hotkey_layout.addWidget(e1, r, 1)
+            hotkey_layout.addWidget(e1, r, 3)
             if l2:
-                hotkey_layout.addWidget(QLabel(l2), r, 2, Qt.AlignRight)
+                hotkey_layout.addWidget(QLabel(l2), r, 4, Qt.AlignRight)
                 e2 = QLineEdit(v2); e2.setFixedSize(30, 30)
-                hotkey_layout.addWidget(e2, r, 3)
+                hotkey_layout.addWidget(e2, r, 5)
             if l3:
-                hotkey_layout.addWidget(QLabel(l3), r, 4, Qt.AlignRight)
+                hotkey_layout.addWidget(QLabel(l3), r, 6, Qt.AlignRight)
                 e3 = QLineEdit(v3); e3.setFixedSize(30, 30)
-                hotkey_layout.addWidget(e3, r, 5)
+                hotkey_layout.addWidget(e3, r, 7)
 
-        self.hotkey_block = hotkey_layout.itemAtPosition(0, 1).widget()
-        self.hotkey_follow = hotkey_layout.itemAtPosition(0, 3).widget()
-        self.hotkey_kill1 = hotkey_layout.itemAtPosition(0, 5).widget()
-        self.hotkey_dodge = hotkey_layout.itemAtPosition(1, 1).widget()
-        self.hotkey_pickup = hotkey_layout.itemAtPosition(1, 3).widget()
-        self.hotkey_kill2 = hotkey_layout.itemAtPosition(1, 5).widget()
-        self.hotkey_interrupt = hotkey_layout.itemAtPosition(2, 1).widget()
-        self.hotkey_team = hotkey_layout.itemAtPosition(2, 3).widget()
-        self.hotkey_kill3 = hotkey_layout.itemAtPosition(2, 5).widget()
-        self.hotkey_target = hotkey_layout.itemAtPosition(3, 1).widget()
-        self.hotkey_kill4 = hotkey_layout.itemAtPosition(3, 5).widget()
+        self.hotkey_up = hotkey_layout.itemAtPosition(0, 1).widget()
+        self.hotkey_left = hotkey_layout.itemAtPosition(1, 1).widget()
+        self.hotkey_down = hotkey_layout.itemAtPosition(2, 1).widget()
+        self.hotkey_right = hotkey_layout.itemAtPosition(3, 1).widget()
+        self.hotkey_block = hotkey_layout.itemAtPosition(0, 3).widget()
+        self.hotkey_follow = hotkey_layout.itemAtPosition(0, 5).widget()
+        self.hotkey_kill1 = hotkey_layout.itemAtPosition(0, 7).widget()
+        self.hotkey_dodge = hotkey_layout.itemAtPosition(1, 3).widget()
+        self.hotkey_pickup = hotkey_layout.itemAtPosition(1, 5).widget()
+        self.hotkey_kill2 = hotkey_layout.itemAtPosition(1, 7).widget()
+        self.hotkey_interrupt = hotkey_layout.itemAtPosition(2, 3).widget()
+        self.hotkey_team = hotkey_layout.itemAtPosition(2, 5).widget()
+        self.hotkey_kill3 = hotkey_layout.itemAtPosition(2, 7).widget()
+        self.hotkey_target = hotkey_layout.itemAtPosition(3, 3).widget()
+        self.hotkey_kill4 = hotkey_layout.itemAtPosition(3, 7).widget()
 
         hotkey_group.setLayout(hotkey_layout)
         layout.addWidget(hotkey_group)
@@ -1847,6 +1854,10 @@ class MainWindow(QMainWindow):
         self.normal_attack_key.setText(c.get("普攻选项"))
 
         # 功能快捷键
+        self.hotkey_up.setText(c.get("上移键.Text", "w"))
+        self.hotkey_left.setText(c.get("左移键.Text", "a"))
+        self.hotkey_down.setText(c.get("下移键.Text", "s"))
+        self.hotkey_right.setText(c.get("右移键.Text", "d"))
         self.hotkey_block.setText(c.get("格挡键.Text", "r"))
         self.hotkey_follow.setText(c.get("跟随键.Text", "f5"))
         self.hotkey_kill1.setText(c.get("秒杀技1.Text", "2"))
@@ -2044,6 +2055,10 @@ class MainWindow(QMainWindow):
         c.set("普攻选项", self.normal_attack_key.text())
 
         # 功能快捷键
+        c.set("上移键.Text", self.hotkey_up.text())
+        c.set("左移键.Text", self.hotkey_left.text())
+        c.set("下移键.Text", self.hotkey_down.text())
+        c.set("右移键.Text", self.hotkey_right.text())
         c.set("格挡键.Text", self.hotkey_block.text())
         c.set("跟随键.Text", self.hotkey_follow.text())
         c.set("秒杀技1.Text", self.hotkey_kill1.text())

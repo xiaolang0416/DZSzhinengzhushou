@@ -20,6 +20,7 @@ class AutomationEngine:
         self._templates_dir = "templates"
         self._held_keys = []
         self._move_direction = None
+        self._hp_region = None
         self._init_input()
         self._init_recognizer()
 
@@ -151,12 +152,67 @@ class AutomationEngine:
         except Exception:
             return False
 
+    def set_hp_region(self, region):
+        """设置角色HP条区域 (x, y, w, h)，相对游戏窗口；None或w<=0表示全屏检测"""
+        if region and len(region) == 4 and region[2] > 0 and region[3] > 0:
+            self._hp_region = tuple(int(v) for v in region)
+        else:
+            self._hp_region = None
+
+    def calibrate_hp_region(self, log=None):
+        """
+        自动校准角色HP条区域：在游戏窗口左下角查找红色水平血条
+        返回 (x, y, w, h) 相对游戏窗口坐标，失败返回 None
+        """
+        if not self._recognizer:
+            return None
+        try:
+            screen = self._recognizer.capture()
+            if screen is None:
+                return None
+
+            sh, sw = screen.shape[:2]
+            # 角色HP条位于左下角：左45%宽、下30%高
+            zone = screen[int(sh * 0.70):sh, 0:int(sw * 0.45)]
+            hsv = cv2.cvtColor(zone, cv2.COLOR_BGR2HSV)
+            lower_red1 = np.array([0, 100, 80])
+            upper_red1 = np.array([12, 255, 255])
+            lower_red2 = np.array([168, 100, 80])
+            upper_red2 = np.array([180, 255, 255])
+            mask = cv2.bitwise_or(
+                cv2.inRange(hsv, lower_red1, upper_red1),
+                cv2.inRange(hsv, lower_red2, upper_red2)
+            )
+            # 纵向膨胀，把细红带补成完整血条高度
+            mask = cv2.dilate(mask, np.ones((9, 1), np.uint8))
+
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            best = None
+            best_w = 0
+            for contour in contours:
+                x, y, w, h = cv2.boundingRect(contour)
+                # HP条为水平长条：宽明显大于高，宽度在合理范围
+                if w > h * 3 and 60 < w < sw * 0.4 and 2 <= h < 40:
+                    if w > best_w:
+                        best_w = w
+                        best = (x, y + int(sh * 0.70), w, h)
+
+            if best:
+                self._hp_region = best
+                if log:
+                    log(f"[校准] HP条区域: x={best[0]}, y={best[1]}, w={best[2]}, h={best[3]}")
+                return best
+            if log:
+                log("[校准] 未检测到HP条，请确认角色界面可见或手动填写区域")
+            return None
+        except Exception:
+            return None
+
     def _check_hp(self, hp_color=(0, 0, 255), hp_region=None, threshold=0.3):
         """
         检测HP血量，返回当前HP比例 (0.0-1.0)
-        hp_color: HP条颜色 (B, G, R)
-        hp_region: HP条区域 (x, y, w, h)，None则使用全屏
-        threshold: 颜色容差
+        使用已校准/指定区域时按"列占比"计算：血条从右向左消耗，含红色的列数/总列数=HP%
+        无区域时退化为全屏红色像素占比（仅供参考）
         """
         if not self._recognizer:
             return 1.0
@@ -166,22 +222,32 @@ class AutomationEngine:
             if screen is None:
                 return 1.0
 
-            if hp_region:
-                x, y, w, h = hp_region
-                hp_bar = screen[y:y+h, x:x+w]
-                if hp_bar.size == 0:
-                    return 1.0
-            else:
+            region = hp_region or self._hp_region
+            if not region:
                 hp_bar = screen
+                hsv = cv2.cvtColor(hp_bar, cv2.COLOR_BGR2HSV)
+                mask = cv2.bitwise_or(
+                    cv2.inRange(hsv, np.array([0, 100, 100]), np.array([12, 255, 255])),
+                    cv2.inRange(hsv, np.array([168, 100, 100]), np.array([180, 255, 255]))
+                )
+                total = hp_bar.shape[0] * hp_bar.shape[1]
+                return min(1.0, cv2.countNonZero(mask) / max(1, total))
 
-            lower = np.array([max(0, c - threshold) for c in hp_color])
-            upper = np.array([min(255, c + threshold) for c in hp_color])
-            mask = cv2.inRange(hp_bar, lower, upper)
+            x, y, w, h = region
+            hp_bar = screen[y:y+h, x:x+w]
+            if hp_bar.size == 0:
+                return 1.0
 
-            total_pixels = hp_bar.shape[0] * hp_bar.shape[1]
-            hp_pixels = cv2.countNonZero(mask)
-
-            return min(1.0, hp_pixels / max(1, total_pixels))
+            hsv = cv2.cvtColor(hp_bar, cv2.COLOR_BGR2HSV)
+            mask = cv2.bitwise_or(
+                cv2.inRange(hsv, np.array([0, 100, 80]), np.array([12, 255, 255])),
+                cv2.inRange(hsv, np.array([168, 100, 80]), np.array([180, 255, 255]))
+            )
+            # 列占比：每一列只要有红色就算有血
+            col_has_red = np.any(mask > 0, axis=0)
+            total_cols = col_has_red.shape[0]
+            red_cols = int(np.count_nonzero(col_has_red))
+            return min(1.0, red_cols / max(1, total_cols))
         except Exception:
             return 1.0
 
@@ -311,23 +377,82 @@ class AutomationEngine:
 
             # 排除底部HP条区域
             h, w = red_mask.shape
-            red_mask[int(h*0.85):, :] = 0
+            red_mask[int(h * 0.85):, :] = 0
+            # 排除左下角聊天框（红/橙色世界、系统文字会被误判为血条）
+            red_mask[int(h * 0.55):, :int(w * 0.24)] = 0
+            # 排除最左侧 HUD 竖条
+            red_mask[:, :int(w * 0.03)] = 0
+            # 排除右上角小地图区域
+            red_mask[:int(h * 0.22), int(w * 0.82):] = 0
 
             # 查找红色区域（怪物血条）
             contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+            # 收集所有符合血条形状的候选，再挑选最优：优先靠近画面中心(角色附近)且面积较大的
+            cx_screen, cy_screen = w / 2.0, h / 2.0
+            best = None
+            best_score = None
             for contour in contours:
-                x, y, w, h = cv2.boundingRect(contour)
+                x, y, cw, ch = cv2.boundingRect(contour)
                 # 怪物血条通常是长方形：宽度>高度，且宽度在合理范围
-                if w > h and 30 < w < 200 and 5 < h < 30:
-                    # 血条中心位置
-                    center_x = x + w // 2
-                    center_y = y + h // 2
-                    return (center_x, center_y)
+                if cw > ch and 30 < cw < 200 and 5 < ch < 30:
+                    center_x = x + cw // 2
+                    center_y = y + ch // 2
+                    dist = ((center_x - cx_screen) ** 2 + (center_y - cy_screen) ** 2) ** 0.5
+                    # 分数：越靠近中心、面积越大越优
+                    score = cw * ch - dist * 2.0
+                    if best_score is None or score > best_score:
+                        best_score = score
+                        best = (center_x, center_y)
 
-            return None
+            return best
         except Exception:
             return None
+
+    def _move_toward_monster(self, monster_pos, log, move_duration=0.5):
+        """
+        根据怪物在屏幕上的位置，使用WASD方向键移动角色靠近怪物
+        monster_pos: (x, y) 怪物在屏幕上的位置
+        move_duration: 每个方向的移动持续时间（秒）
+        """
+        if not self._recognizer or not monster_pos:
+            return
+
+        try:
+            screen = self._recognizer.capture()
+            if screen is None:
+                return
+
+            screen_h, screen_w = screen.shape[:2]
+            center_x = screen_w // 2
+            center_y = screen_h // 2
+
+            mon_x, mon_y = monster_pos
+
+            dx = mon_x - center_x
+            dy = mon_y - center_y
+
+            # 判断水平方向
+            if abs(dx) > screen_w * 0.1:
+                if dx < 0:
+                    log(f"[移动] 怪物在左侧，按A向左移动")
+                    self._move_character("a", move_duration)
+                else:
+                    log(f"[移动] 怪物在右侧，按D向右移动")
+                    self._move_character("d", move_duration)
+
+            # 判断垂直方向
+            if abs(dy) > screen_h * 0.1:
+                if dy < 0:
+                    log(f"[移动] 怪物在上方，按W向前移动")
+                    self._move_character("w", move_duration)
+                else:
+                    log(f"[移动] 怪物在下方，按S向后移动")
+                    self._move_character("s", move_duration)
+
+            time.sleep(0.2)
+        except Exception as e:
+            log(f"[移动] 移动异常: {e}")
 
     def _auto_fight_monster(self, params, running, log, max_fight_time=60):
         """
@@ -405,7 +530,10 @@ class AutomationEngine:
 
             time.sleep(0.3)
 
-        log(f"[战斗] 战斗超时 ({max_fight_time}秒)")
+        if not running():
+            log("[战斗] 收到停止指令，结束战斗")
+        else:
+            log(f"[战斗] 战斗超时 ({max_fight_time}秒)")
         return False
 
     def _run_auto_combat(self, params, running, log):
@@ -444,6 +572,24 @@ class AutomationEngine:
                     combat_count += 1
                     log(f"[自动战斗] 检测到战斗状态 (置信度: {confidence:.0%})，开始攻击！")
 
+                    # 先检测仇恨怪物位置并移动靠近（血条会闪烁，多次采样直到捕捉到）
+                    monster_pos = None
+                    for _ in range(6):
+                        if not running():
+                            break
+                        monster_pos = self._detect_monster_with_aggro()
+                        if monster_pos:
+                            break
+                        time.sleep(0.25)
+                    if monster_pos:
+                        log(f"[自动战斗] 发现仇恨怪物 {monster_pos}，移动到怪物位置...")
+                        self._move_toward_monster(monster_pos, log, move_duration=0.6)
+                        time.sleep(0.3)
+                        # 再次检测，确保靠近后继续移动
+                        monster_pos2 = self._detect_monster_with_aggro()
+                        if monster_pos2:
+                            self._move_toward_monster(monster_pos2, log, move_duration=0.4)
+
                     # 自动攻击直到怪物死亡
                     monster_killed = self._auto_fight_monster(
                         params, running, log, max_fight_time=120
@@ -478,6 +624,9 @@ class AutomationEngine:
             log(f"[自动战斗] 自动战斗模式结束，共完成{combat_count}次战斗")
 
     def execute_task(self, task_name, params, running_flag, log_func):
+        hp_region = params.get("hp_region")
+        if hp_region:
+            self.set_hp_region(hp_region)
         if task_name == "combat":
             self._run_combat(params, running_flag, log_func)
         elif task_name == "auto_combat":

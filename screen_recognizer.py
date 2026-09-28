@@ -21,16 +21,38 @@ class ScreenRecognizer:
         self._game_region = {"left": x, "top": y, "width": w, "height": h}
 
     def set_game_region_by_title(self, title, fixed_width=None, fixed_height=None):
-        """通过窗口标题自动定位游戏区域，可选固定分辨率"""
+        """通过窗口标题自动定位游戏区域，可选固定分辨率。
+        游戏标题含实时变化的帧率(如 'fps:59 ...')，故对标题做归一化后模糊匹配，
+        避免因帧率数字变化导致精确匹配失败。"""
         try:
             import pygetwindow as gw
-            windows = gw.getWindowsWithTitle(title)
-            if windows:
-                win = windows[0]
-                w = fixed_width if fixed_width else win.width
-                h = fixed_height if fixed_height else win.height
-                self.set_game_region(win.left, win.top, w, h)
-                return True
+            import re
+
+            def normalize(t):
+                # 去掉可变的帧率片段与多余空白，保留稳定部分用于匹配
+                return re.sub(r"\s+", " ", re.sub(r"fps:\s*\d+", "", t or "")).strip()
+
+            def is_valid(win):
+                # 跳过最小化/无效窗口（坐标为 -32000 且尺寸异常小）
+                return not (win.left <= -32000 or win.top <= -32000 or win.width < 100 or win.height < 100)
+
+            target = normalize(title)
+            candidates = []
+            if target:
+                for win in gw.getAllWindows():
+                    if normalize(win.title) == target and is_valid(win):
+                        candidates.append(win)
+            # 归一化匹配失败时退回精确标题匹配
+            if not candidates:
+                candidates = [w for w in gw.getWindowsWithTitle(title) if is_valid(w)]
+            if not candidates:
+                return False
+
+            win = candidates[0]
+            w = fixed_width if fixed_width else win.width
+            h = fixed_height if fixed_height else win.height
+            self.set_game_region(win.left, win.top, w, h)
+            return True
         except Exception:
             pass
         return False

@@ -39,7 +39,7 @@ user32 = ctypes.windll.user32
 
 
 class GameOverlay(QWidget):
-    """游戏吸附悬浮窗，显示在游戏窗口左上角"""
+    """游戏锁定悬浮窗，显示在游戏窗口左上角"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -61,7 +61,7 @@ class GameOverlay(QWidget):
         self.time_label.setStyleSheet("color: #ff3333; font-size: 13px; font-weight: bold;")
 
         self.status_label = QLabel("")
-        self.status_label.setStyleSheet("color: #ff69b4; font-size: 13px; font-weight: bold;")
+        self.status_label.setStyleSheet("color: #CC0000; font-size: 13px; font-weight: bold;")
 
         self.task_label = QLabel("")
         self.task_label.setStyleSheet("color: #ff3333; font-size: 13px; font-weight: bold;")
@@ -77,9 +77,11 @@ class GameOverlay(QWidget):
         self._pos_timer = QTimer(self)
         self._pos_timer.timeout.connect(self._reposition)
         self._game_hwnd = None
+        self._detected_title = None
 
-    def start_overlay(self, game_hwnd=None):
+    def start_overlay(self, game_hwnd=None, detected_title=None):
         self._game_hwnd = game_hwnd
+        self._detected_title = detected_title
         self._update_time()
         self.status_label.setText("正常运行中")
         self.task_label.setText("")
@@ -110,15 +112,31 @@ class GameOverlay(QWidget):
                 return
         try:
             import pygetwindow as gw
-            game_title = "斗战神"
+            import os
+            my_pid = os.getpid()
+            search_titles = []
+            if self._detected_title:
+                search_titles.append(self._detected_title)
             if self.parent() and hasattr(self.parent(), 'game_title_input'):
                 t = self.parent().game_title_input.text().strip()
-                if t:
-                    game_title = t
-            wins = gw.getWindowsWithTitle(game_title)
-            if wins:
-                w = wins[0]
-                self.move(w.left + 10, w.top + 10)
+                if t and t not in search_titles:
+                    search_titles.append(t)
+            search_titles.extend(["fps:", "斗战神", "DZS", "dzs"])
+            for title in search_titles:
+                wins = gw.getWindowsWithTitle(title)
+                for w in wins:
+                    if w.title == (self.parent().windowTitle() if self.parent() else ""):
+                        continue
+                    try:
+                        hwnd = w._hWnd
+                        pid_val = ctypes.c_ulong()
+                        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid_val))
+                        if pid_val.value == my_pid:
+                            continue
+                    except Exception:
+                        pass
+                    self.move(w.left + 10, w.top + 10)
+                    return
         except Exception:
             pass
 
@@ -457,6 +475,33 @@ class MainWindow(QMainWindow):
         auto_combat_info.setStyleSheet("color: gray; font-size: 11px;")
         auto_combat_info.setWordWrap(True)
         auto_combat_layout.addWidget(auto_combat_info)
+
+        hp_region_layout = QGridLayout()
+        hp_region_layout.addWidget(QLabel("HP条区域(相对游戏窗口):"), 0, 0)
+        hp_region_layout.addWidget(QLabel("X:"), 0, 1)
+        self.hp_region_x = QSpinBox()
+        self.hp_region_x.setRange(0, 4000)
+        hp_region_layout.addWidget(self.hp_region_x, 0, 2)
+        hp_region_layout.addWidget(QLabel("Y:"), 0, 3)
+        self.hp_region_y = QSpinBox()
+        self.hp_region_y.setRange(0, 4000)
+        hp_region_layout.addWidget(self.hp_region_y, 0, 4)
+        hp_region_layout.addWidget(QLabel("宽:"), 0, 5)
+        self.hp_region_w = QSpinBox()
+        self.hp_region_w.setRange(0, 4000)
+        hp_region_layout.addWidget(self.hp_region_w, 0, 6)
+        hp_region_layout.addWidget(QLabel("高:"), 0, 7)
+        self.hp_region_h = QSpinBox()
+        self.hp_region_h.setRange(0, 4000)
+        hp_region_layout.addWidget(self.hp_region_h, 0, 8)
+        self.btn_calibrate_hp = QPushButton("自动校准HP条")
+        self.btn_calibrate_hp.clicked.connect(self._calibrate_hp_region)
+        hp_region_layout.addWidget(self.btn_calibrate_hp, 0, 9)
+        hp_region_layout.setColumnStretch(10, 1)
+        auto_combat_layout.addLayout(hp_region_layout)
+        hp_region_tip = QLabel("留空(宽=0)则使用全屏检测；建议点自动校准框定角色HP条，血量判断更准确")
+        hp_region_tip.setStyleSheet("color: gray; font-size: 11px;")
+        auto_combat_layout.addWidget(hp_region_tip)
         auto_combat_group.setLayout(auto_combat_layout)
         layout.addWidget(auto_combat_group)
 
@@ -1460,6 +1505,10 @@ class MainWindow(QMainWindow):
             "team_key": self.hotkey_team.text().strip() or "j",
             "hp_key": c.get("HP药品键.Text", "1"),
             "hp_threshold": c.get_float("HP阈值.Text", 0.3),
+            "hp_region": [
+                self.hp_region_x.value(), self.hp_region_y.value(),
+                self.hp_region_w.value(), self.hp_region_h.value(),
+            ] if self.hp_region_w.value() > 0 else None,
         }
 
         if c.get_bool("自动战斗选项"):
@@ -1643,6 +1692,23 @@ class MainWindow(QMainWindow):
 
         return task_chain
 
+    def _calibrate_hp_region(self):
+        """自动校准角色HP条区域并填入输入框"""
+        game_title = self.game_title_input.text().strip() if hasattr(self, 'game_title_input') else "斗战神"
+        if not self.engine.set_game_window(game_title):
+            for t in ["fps:", "斗战神", "DZS"]:
+                if self.engine.set_game_window(t):
+                    break
+        region = self.engine.calibrate_hp_region(log=self.append_log)
+        if region:
+            self.hp_region_x.setValue(region[0])
+            self.hp_region_y.setValue(region[1])
+            self.hp_region_w.setValue(region[2])
+            self.hp_region_h.setValue(region[3])
+            self.append_log("[校准] HP条区域已填入，保存配置后生效")
+        else:
+            self.append_log("[校准] 失败：请确认游戏窗口可见且角色HP条在画面左下角")
+
     def toggle_start(self):
         if self.worker is None or not self.worker.isRunning():
             self.append_log("[调试] 开始启动流程...")
@@ -1702,8 +1768,38 @@ class MainWindow(QMainWindow):
             self.worker.finished_signal.connect(self._on_worker_finished)
             self.worker.start()
 
-            game_hwnd = user32.FindWindowW(None, game_title)
-            self.overlay.start_overlay(game_hwnd if game_hwnd else None)
+            import os as _os
+            _my_pid = _os.getpid()
+            game_hwnd = None
+            detected_title = None
+            _search_titles = [game_title, "fps:", "斗战神", "DZS", "dzs"]
+            try:
+                import pygetwindow as _gw
+                for _t in _search_titles:
+                    if not _t:
+                        continue
+                    _wins = _gw.getWindowsWithTitle(_t)
+                    for _w in _wins:
+                        if _w.title == self.windowTitle():
+                            continue
+                        try:
+                            _hwnd = _w._hWnd
+                            _pid_val = ctypes.c_ulong()
+                            user32.GetWindowThreadProcessId(_hwnd, ctypes.byref(_pid_val))
+                            if _pid_val.value == _my_pid:
+                                continue
+                        except Exception:
+                            pass
+                        game_hwnd = _hwnd
+                        detected_title = _w.title
+                        break
+                    if game_hwnd:
+                        break
+            except Exception:
+                pass
+            if not game_hwnd:
+                game_hwnd = user32.FindWindowW(None, game_title)
+            self.overlay.start_overlay(game_hwnd if game_hwnd else None, detected_title)
         else:
             self.stop_all()
 
@@ -1977,6 +2073,10 @@ class MainWindow(QMainWindow):
 
         # 自动战斗
         self.chk_auto_combat.setChecked(c.get_bool("自动战斗选项"))
+        self.hp_region_x.setValue(c.get_int("HP条X.Text", 0))
+        self.hp_region_y.setValue(c.get_int("HP条Y.Text", 0))
+        self.hp_region_w.setValue(c.get_int("HP条W.Text", 0))
+        self.hp_region_h.setValue(c.get_int("HP条H.Text", 0))
 
         # 镇妖设置
         for i in range(1, 5):
@@ -2178,6 +2278,10 @@ class MainWindow(QMainWindow):
 
         # 自动战斗
         c.set_bool("自动战斗选项", self.chk_auto_combat.isChecked())
+        c.set("HP条X.Text", self.hp_region_x.value())
+        c.set("HP条Y.Text", self.hp_region_y.value())
+        c.set("HP条W.Text", self.hp_region_w.value())
+        c.set("HP条H.Text", self.hp_region_h.value())
 
         # 镇妖设置
         for i in range(1, 5):

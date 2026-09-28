@@ -9,7 +9,7 @@ import ssl
 import os
 import hashlib
 
-APP_VERSION = "5.0.0"
+APP_VERSION = "1.0.6"
 APP_NAME = "小狼智能助手"
 
 

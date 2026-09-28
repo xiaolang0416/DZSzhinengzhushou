@@ -1016,21 +1016,92 @@ class AutomationEngine:
                     self._do_combat_cycle(params, running, log)
                 time.sleep(1)
 
-    def _move_to_coordinate(self, x, y, log, timeout=10):
+    def _wait_move_settle(self, timeout, log):
         """
-        移动到指定坐标（相对于游戏窗口）
-        通过点击地面实现移动
+        等待一次点击移动结束。斗战神角色始终居中、世界滚动，
+        因此用"画面是否停止变化"判定移动结束。
+        返回 (settled, moved):
+          moved   = 期间画面发生过明显位移(角色确实在走)
+          settled = 走动后画面稳定下来(到达) 或 全程未移动(疑似阻挡)
+        """
+        prev = self._recognizer.capture()
+        if prev is None:
+            time.sleep(timeout)
+            return False, False
+        prev = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+        h0, w0 = prev.shape
+        # 取角色左侧的世界区域做差，避开中心角色待机动画、四周HUD/小地图/聊天框
+        r1, r2 = int(h0 * 0.30), int(h0 * 0.65)
+        c1, c2 = int(w0 * 0.15), int(w0 * 0.42)
+
+        deadline = time.time() + timeout
+        moving_thr, still_thr, still_need = 8.0, 4.0, 0.5
+        was_moving = False
+        still_since = None
+        while time.time() < deadline:
+            time.sleep(0.15)
+            cur = self._recognizer.capture()
+            if cur is None:
+                continue
+            cur = cv2.cvtColor(cur, cv2.COLOR_BGR2GRAY)
+            d = float(np.mean(cv2.absdiff(cur[r1:r2, c1:c2], prev[r1:r2, c1:c2])))
+            prev = cur
+            if d >= moving_thr:
+                was_moving = True
+                still_since = None
+            elif d < still_thr:
+                if still_since is None:
+                    still_since = time.time()
+                elif was_moving and (time.time() - still_since) >= still_need:
+                    return True, True   # 走动后停下 = 到达
+            else:
+                still_since = None
+
+        if not was_moving:
+            return True, False          # 全程未移动 = 疑似被地形阻挡
+        return False, True              # 超时时仍在移动
+
+    def _move_to_coordinate(self, x, y, log, timeout=10, max_retries=3):
+        """
+        移动到指定坐标（相对游戏窗口），通过点击地面实现。
+        增加到达校验(画面停止变化)与地形阻挡处理(几乎没移动则偏移重试+双击重新寻路)。
+        返回 True 表示已出发/到达，False 表示多次尝试仍被阻挡。
         """
         if not self._recognizer or not self._recognizer._game_region:
             self._click(x, y)
-            return
+            return True
 
         gr = self._recognizer._game_region
-        screen_x = gr["left"] + x
-        screen_y = gr["top"] + y
+        base_x = gr["left"] + x
+        base_y = gr["top"] + y
+        per_click = max(2.5, timeout / max_retries)
 
-        self._click(screen_x, screen_y)
-        log(f"[移动] 点击坐标 ({screen_x}, {screen_y})")
+        for attempt in range(max_retries):
+            if attempt == 0:
+                cx, cy = base_x, base_y
+            else:
+                # 阻挡重试：沿垂直方向偏移绕开障碍，越试越远
+                off = 45 * attempt
+                cx = base_x + (off if attempt % 2 == 0 else -off)
+                cy = max(0, base_y - off)
+
+            self._click(cx, cy)
+            if attempt > 0:
+                time.sleep(0.05)
+                self._click(cx, cy)  # 双击触发重新寻路
+            log(f"[移动] 第{attempt + 1}/{max_retries}次点击坐标 ({cx}, {cy})")
+
+            settled, moved = self._wait_move_settle(per_click, log)
+            if moved and settled:
+                log("[移动] 到达目标点(画面已停止变化)")
+                return True
+            if moved and not settled:
+                log("[移动] 仍在朝目标移动，视为已出发")
+                return True
+            log("[移动] 疑似被地形阻挡，偏移后重试")
+
+        log("[移动] 多次尝试仍未移动，放弃该坐标")
+        return False
 
     def _run_pvp(self, params, running, log):
         pvp_mode = params.get("pvp_mode", "solo")

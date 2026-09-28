@@ -7,12 +7,12 @@ import sys
 import subprocess
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(PROJECT_DIR, "dist_new8")
+DIST_DIR = os.path.join(PROJECT_DIR, "dist_new9")
 BUILD_DIR = os.path.join(PROJECT_DIR, "build")
 SPEC_FILE = os.path.join(PROJECT_DIR, "feifei_assistant.spec")
 
 MAIN_SCRIPT = "feifei_assistant.py"
-APP_NAME = "小狼智能助手5.1"
+APP_NAME = "小狼智能助手1.0.6"
 
 
 def build():

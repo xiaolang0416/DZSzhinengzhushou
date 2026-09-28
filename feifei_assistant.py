@@ -1,5 +1,5 @@
 """
-小狼智能助手5.1-斗战神
+小狼智能助手1.0.6-斗战神
 基于原始 uservar.ini 配置结构和功能说明重新实现
 """
 import sys
@@ -212,7 +212,7 @@ class MainWindow(QMainWindow):
         self.auto_detect_game_window()
 
     def init_ui(self):
-        self.setWindowTitle("小狼智能助手5.1-斗战神")
+        self.setWindowTitle("小狼智能助手1.0.6-斗战神")
         if getattr(sys, 'frozen', False):
             base_dir = os.path.dirname(sys.executable)
         else:
@@ -278,7 +278,7 @@ class MainWindow(QMainWindow):
         btn_layout.addWidget(self.status_label)
         main_layout.addLayout(btn_layout)
 
-        self.statusBar().showMessage("小狼智能助手5.1-斗战神 - 就绪")
+        self.statusBar().showMessage("小狼智能助手1.0.6-斗战神 - 就绪")
 
     def create_combat_tab(self):
         tab = QWidget()

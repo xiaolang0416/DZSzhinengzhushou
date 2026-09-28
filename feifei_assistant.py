@@ -213,6 +213,7 @@ class MainWindow(QMainWindow):
         self.overlay = GameOverlay(self)
 
         self.log_signal.connect(self.append_log)
+        self._run_log_path = None
         self.init_ui()
         self.load_config()
         self._apply_config_to_gui()
@@ -1723,12 +1724,10 @@ class MainWindow(QMainWindow):
             self.append_log(f"[调试] 游戏窗口标题: {game_title}")
             if self.engine.set_game_window(game_title):
                 self.append_log(f"[启动] 已定位游戏窗口: {game_title}")
-                import pygetwindow as gw
-                wins = gw.getWindowsWithTitle(game_title)
-                if wins:
-                    w = wins[0]
+                gr = self.engine._recognizer._game_region
+                if gr:
                     self.window_status_label.setText(
-                        f"已绑定: {w.title} ({w.width}x{w.height})"
+                        f"已绑定: 游戏区域 ({gr['width']}x{gr['height']} @ {gr['left']},{gr['top']})"
                     )
                     self.window_status_label.setStyleSheet("color: green;")
             else:
@@ -1903,6 +1902,14 @@ class MainWindow(QMainWindow):
     def append_log(self, text):
         timestamp = time.strftime("%H:%M:%S")
         self.log_text.append(f"[{timestamp}] {text}")
+        try:
+            if self._run_log_path is None:
+                self._run_log_path = os.path.join(
+                    os.path.dirname(self.config.get_config_path()), "运行日志.txt")
+            with open(self._run_log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%H:%M:%S')}] {text}\n")
+        except Exception:
+            pass
 
     def load_config(self):
         config_path = self.config.get_config_path()

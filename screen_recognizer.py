@@ -23,28 +23,47 @@ class ScreenRecognizer:
     def set_game_region_by_title(self, title, fixed_width=None, fixed_height=None):
         """通过窗口标题自动定位游戏区域，可选固定分辨率。
         游戏标题含实时变化的帧率(如 'fps:59 ...')，故对标题做归一化后模糊匹配，
-        避免因帧率数字变化导致精确匹配失败。"""
+        避免因帧率数字变化导致精确匹配失败。
+        助手自身窗口标题也含"斗战神"，必须排除，否则会绑定到自己身上。"""
         try:
             import pygetwindow as gw
             import re
+            import os
 
             def normalize(t):
                 # 去掉可变的帧率片段与多余空白，保留稳定部分用于匹配
                 return re.sub(r"\s+", " ", re.sub(r"fps:\s*\d+", "", t or "")).strip()
 
+            def is_own(win):
+                if getattr(win, "_pid", None) == os.getpid():
+                    return True
+                return "智能助手" in (win.title or "")
+
             def is_valid(win):
                 # 跳过最小化/无效窗口（坐标为 -32000 且尺寸异常小）
                 return not (win.left <= -32000 or win.top <= -32000 or win.width < 100 or win.height < 100)
 
+            def usable(win):
+                return is_valid(win) and not is_own(win)
+
             target = normalize(title)
             candidates = []
             if target:
-                for win in gw.getAllWindows():
-                    if normalize(win.title) == target and is_valid(win):
-                        candidates.append(win)
-            # 归一化匹配失败时退回精确标题匹配
+                candidates = [w for w in gw.getAllWindows()
+                              if normalize(w.title) == target and usable(w)]
+            # 归一化精确匹配失败时退回标题包含匹配
+            if not candidates and target:
+                candidates = [w for w in gw.getAllWindows()
+                              if target in normalize(w.title) and usable(w)]
             if not candidates:
-                candidates = [w for w in gw.getWindowsWithTitle(title) if is_valid(w)]
+                candidates = [w for w in gw.getWindowsWithTitle(title) if usable(w)]
+            # 斗战神客户端标题形如 'fps:59 Ver:1.6.10.13286 五庄观 4.40'，不含"斗战神"字样，
+            # 按该特征兜底选取面积最大的窗口
+            if not candidates:
+                sig = [w for w in gw.getAllWindows()
+                       if usable(w) and re.search(r"fps:\s*\d+.*Ver:", w.title or "")]
+                sig.sort(key=lambda w: w.width * w.height, reverse=True)
+                candidates = sig
             if not candidates:
                 return False
 

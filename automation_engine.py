@@ -212,7 +212,7 @@ class AutomationEngine:
         """
         检测HP血量，返回当前HP比例 (0.0-1.0)
         使用已校准/指定区域时按"列占比"计算：血条从右向左消耗，含红色的列数/总列数=HP%
-        无区域时退化为全屏红色像素占比（仅供参考）
+        未定位到血条时返回1.0（血量未知则不喝药）
         """
         if not self._recognizer:
             return 1.0
@@ -224,14 +224,9 @@ class AutomationEngine:
 
             region = hp_region or self._hp_region
             if not region:
-                hp_bar = screen
-                hsv = cv2.cvtColor(hp_bar, cv2.COLOR_BGR2HSV)
-                mask = cv2.bitwise_or(
-                    cv2.inRange(hsv, np.array([0, 100, 100]), np.array([12, 255, 255])),
-                    cv2.inRange(hsv, np.array([168, 100, 100]), np.array([180, 255, 255]))
-                )
-                total = hp_bar.shape[0] * hp_bar.shape[1]
-                return min(1.0, cv2.countNonZero(mask) / max(1, total))
+                # 全屏红色像素占比会被红土地面/怪物血条严重干扰（实测误读为2%导致无限喝药），
+                # 未定位到血条时视为血量未知，返回满血不喝药
+                return 1.0
 
             x, y, w, h = region
             hp_bar = screen[y:y+h, x:x+w]
@@ -365,11 +360,11 @@ class AutomationEngine:
             if screen is None:
                 return None
 
-            # 检测怪物血条（通常是红色长条）
+            # 检测怪物血条（细长的红色横条）
             hsv = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
-            lower_red1 = np.array([0, 150, 150])
+            lower_red1 = np.array([0, 120, 120])
             upper_red1 = np.array([15, 255, 255])
-            lower_red2 = np.array([165, 150, 150])
+            lower_red2 = np.array([165, 120, 120])
             upper_red2 = np.array([180, 255, 255])
             mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
             mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
@@ -394,8 +389,8 @@ class AutomationEngine:
             best_score = None
             for contour in contours:
                 x, y, cw, ch = cv2.boundingRect(contour)
-                # 怪物血条通常是长方形：宽度>高度，且宽度在合理范围
-                if cw > ch and 30 < cw < 200 and 5 < ch < 30:
+                # 怪物血条是极扁的横条(实测约66x3)，用细长比例排除方形文字块
+                if 2 <= ch <= 14 and 25 <= cw <= 220 and cw >= ch * 5:
                     center_x = x + cw // 2
                     center_y = y + ch // 2
                     dist = ((center_x - cx_screen) ** 2 + (center_y - cy_screen) ** 2) ** 0.5
@@ -650,6 +645,8 @@ class AutomationEngine:
 
                     if monster_killed:
                         log(f"[自动战斗] 第{combat_count}次战斗结束，等待脱战...")
+                    elif not running():
+                        log(f"[自动战斗] 第{combat_count}次战斗被手动停止")
                     else:
                         log(f"[自动战斗] 第{combat_count}次战斗超时")
 
@@ -680,6 +677,11 @@ class AutomationEngine:
         hp_region = params.get("hp_region")
         if hp_region:
             self.set_hp_region(hp_region)
+        else:
+            self.set_hp_region(None)
+            # 未手动框定HP条时先自动定位血条，否则血量无法判断、不会喝药
+            if self._recognizer and self._recognizer._game_region:
+                self.calibrate_hp_region(log_func)
         if task_name == "combat":
             self._run_combat(params, running_flag, log_func)
         elif task_name == "auto_combat":

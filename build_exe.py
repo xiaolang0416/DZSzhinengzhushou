@@ -7,7 +7,7 @@ import sys
 import subprocess
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(PROJECT_DIR, "dist_new14")
+DIST_DIR = os.path.join(PROJECT_DIR, "dist_new17")
 BUILD_DIR = os.path.join(PROJECT_DIR, "build")
 SPEC_FILE = os.path.join(PROJECT_DIR, "feifei_assistant.spec")
 
